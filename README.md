@@ -33,7 +33,7 @@ Die .exe ist self-contained, braucht **kein .NET Install** und **kein WebView2-I
 Voraussetzung: [.NET 8 SDK](https://dotnet.microsoft.com/download/dotnet/8.0)
 
 ```bash
-git clone https://github.com/USER/lieblingstypen-obs-remote.git
+git clone https://github.com/lieblingstypen-art/lieblingstypen-obs-remote.git
 cd lieblingstypen-obs-remote/obs-remote-exe
 dotnet publish -c Release -r win-x64 --self-contained=true -p:PublishSingleFile=true
 ```
