@@ -1,0 +1,25 @@
+# Build output
+**/bin/
+**/obj/
+
+# WebView2 runtime data
+**/userdata/
+**/.webview-data/
+**/.edge-profile/
+
+# Visual Studio / Rider
+.vs/
+.idea/
+*.user
+*.suo
+
+# Publish output
+**/publish/
+
+# OS
+Thumbs.db
+.DS_Store
+desktop.ini
+
+# Logs
+*.log

@@ -1,0 +1,2516 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="UTF-8" />
+<title>Lieblingstypen — OBS Remote</title>
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<script>
+  // Patch WebSocket to count bytes — must run before obs-websocket-js loads
+  (() => {
+    const OrigWS = window.WebSocket;
+    window.__netBytesIn = 0;
+    window.__netBytesOut = 0;
+    function Patched(...args) {
+      const ws = new OrigWS(...args);
+      const origSend = ws.send.bind(ws);
+      ws.send = function (data) {
+        try {
+          if (typeof data === "string") window.__netBytesOut += data.length;
+          else if (data && typeof data.byteLength === "number") window.__netBytesOut += data.byteLength;
+          else if (data && typeof data.size === "number") window.__netBytesOut += data.size;
+        } catch {}
+        return origSend(data);
+      };
+      ws.addEventListener("message", (e) => {
+        try {
+          if (typeof e.data === "string") window.__netBytesIn += e.data.length;
+          else if (e.data instanceof Blob) window.__netBytesIn += e.data.size;
+          else if (e.data && typeof e.data.byteLength === "number") window.__netBytesIn += e.data.byteLength;
+        } catch {}
+      });
+      return ws;
+    }
+    Patched.prototype = OrigWS.prototype;
+    Patched.CONNECTING = OrigWS.CONNECTING;
+    Patched.OPEN = OrigWS.OPEN;
+    Patched.CLOSING = OrigWS.CLOSING;
+    Patched.CLOSED = OrigWS.CLOSED;
+    window.WebSocket = Patched;
+  })();
+</script>
+<style>
+  :root {
+    --orange: #ea5e1a;
+    --orange-light: #f78230;
+    --orange-dark: #b8430a;
+    --yellow: #ffb800;
+    --yellow-hot: #ffd23f;
+    --black: #1a1410;
+    --white: #fff8ef;
+    --red: #d62828;
+    --green: #2bb673;
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  html, body {
+    width: 100%; height: 100%;
+    overflow: hidden;
+    font-family: "Bebas Neue", "Arial Black", "Impact", sans-serif;
+    color: var(--white);
+    background: var(--orange);
+    background-image: url("assets/bg.png");
+    background-size: cover;
+    background-position: center;
+    user-select: none;
+  }
+
+  body::before {
+    content: "";
+    position: fixed; inset: 0;
+    background: radial-gradient(ellipse at center, transparent 0%, rgba(0,0,0,0.35) 100%);
+    pointer-events: none;
+    z-index: 0;
+  }
+
+  .app {
+    position: relative; z-index: 1;
+    width: 100%; height: 100vh;
+    display: flex; flex-direction: column;
+    padding: 1.5vh 2vw;
+    gap: 1.2vh;
+    overflow: hidden;
+  }
+
+  /* HEADER */
+  header {
+    display: flex; align-items: center; gap: 1.5vw;
+    padding: 0.4vh 0.5vw;
+    flex-shrink: 0;
+  }
+  .logo {
+    width: 8vh; height: 8vh;
+    border-radius: 50%;
+    background: url("assets/logo.png") center/contain no-repeat;
+    box-shadow: 0 0 0 3px var(--black), 0 0 0 6px var(--yellow);
+    flex-shrink: 0;
+    display: block;
+    cursor: pointer;
+    transition: transform 0.15s, box-shadow 0.15s;
+  }
+  .logo:hover {
+    transform: scale(1.05);
+    box-shadow: 0 0 0 3px var(--black), 0 0 0 6px var(--yellow-hot);
+  }
+  .title {
+    font-size: 4vh; font-weight: 900;
+    letter-spacing: 2px;
+    color: var(--yellow);
+    text-shadow: 3px 3px 0 var(--black), -1px -1px 0 var(--black), 1px -1px 0 var(--black), -1px 1px 0 var(--black);
+  }
+  .subtitle {
+    font-size: 1.6vh; letter-spacing: 4px;
+    color: var(--white);
+    text-shadow: 2px 2px 0 var(--black);
+    margin-top: 0.2vh;
+  }
+
+  .status-strip {
+    margin-left: auto;
+    display: flex; gap: 1.5vw;
+    align-items: center;
+  }
+  .pill {
+    padding: 1vh 2vw;
+    background: var(--black);
+    border: 3px solid var(--yellow);
+    border-radius: 999px;
+    font-size: 2.4vh;
+    letter-spacing: 2px;
+    display: flex; align-items: center; gap: 0.8vw;
+  }
+  .pill .dot {
+    width: 1.6vh; height: 1.6vh; border-radius: 50%;
+    background: #555;
+    box-shadow: 0 0 0 0 transparent;
+  }
+  .pill.on .dot { background: var(--red); box-shadow: 0 0 20px var(--red); animation: pulse 1.2s infinite; }
+  .pill.live .dot { background: var(--green); box-shadow: 0 0 20px var(--green); }
+  @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.4; } }
+
+  /* CONNECTION OVERLAY */
+  .overlay {
+    position: fixed; inset: 0; z-index: 100;
+    background: rgba(0,0,0,0.85);
+    display: flex; align-items: center; justify-content: center;
+  }
+  .overlay.hidden { display: none; }
+  .connect-card {
+    background: var(--black);
+    border: 4px solid var(--yellow);
+    padding: 4vh 4vw;
+    min-width: 40vw;
+    box-shadow: 0 0 0 8px var(--orange), 0 20px 60px rgba(0,0,0,0.6);
+  }
+  .connect-card h2 {
+    font-size: 5vh; color: var(--yellow);
+    text-shadow: 3px 3px 0 var(--orange-dark);
+    margin-bottom: 3vh;
+    letter-spacing: 3px;
+  }
+  .field { margin-bottom: 2vh; }
+  .field label {
+    display: block; font-size: 2vh;
+    color: var(--white); letter-spacing: 2px;
+    margin-bottom: 0.6vh;
+  }
+  .field input {
+    width: 100%; padding: 1.5vh 1.5vw;
+    background: #0d0907; color: var(--white);
+    border: 3px solid var(--orange);
+    font-size: 2.4vh;
+    font-family: monospace;
+    letter-spacing: 1px;
+  }
+  .field input:focus {
+    outline: none; border-color: var(--yellow);
+    box-shadow: 0 0 0 3px rgba(255,184,0,0.3);
+  }
+  .btn {
+    background: var(--orange);
+    color: var(--black);
+    border: 4px solid var(--black);
+    padding: 2vh 3vw;
+    font-family: inherit;
+    font-size: 3vh; font-weight: 900;
+    letter-spacing: 3px;
+    cursor: pointer;
+    box-shadow: 6px 6px 0 var(--black);
+    transition: transform 0.05s, box-shadow 0.05s;
+  }
+  .btn:hover { background: var(--yellow); }
+  .btn:active { transform: translate(3px, 3px); box-shadow: 3px 3px 0 var(--black); }
+  .btn-block { width: 100%; margin-top: 1vh; }
+
+  .error {
+    margin-top: 2vh; padding: 1.5vh; background: var(--red);
+    color: var(--white); font-size: 2vh; letter-spacing: 1px;
+    border: 3px solid var(--black);
+    display: none;
+  }
+  .error.show { display: block; }
+
+  /* NOW PLAYING BIG DISPLAY */
+  .now-playing {
+    background: var(--black);
+    border: 4px solid var(--yellow);
+    box-shadow: 6px 6px 0 rgba(0,0,0,0.6);
+    padding: 1vh 1.5vw;
+    display: flex; align-items: stretch; gap: 1.5vw;
+    flex-shrink: 0;
+  }
+  .now-label {
+    font-size: 1.6vh; letter-spacing: 3px;
+    color: var(--white);
+    writing-mode: vertical-rl; transform: rotate(180deg);
+    border-right: 3px solid var(--orange);
+    padding-right: 0.6vw;
+    flex-shrink: 0;
+    display: flex; align-items: center;
+  }
+  .now-scene {
+    flex: 1; min-width: 0;
+    font-size: 5vh; font-weight: 900;
+    letter-spacing: 2px;
+    color: var(--yellow);
+    text-shadow: 3px 3px 0 var(--orange-dark), -1px -1px 0 var(--black), 1px -1px 0 var(--black), -1px 1px 0 var(--black), 1px 1px 0 var(--black);
+    line-height: 1.05;
+    display: flex; align-items: center;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+
+  /* HOTKEYS section in edit view */
+  .hotkeys-section { margin-top: 1.5vh; }
+  .hotkeys-header {
+    display: flex; align-items: center; gap: 0.6vw;
+    cursor: pointer; user-select: none;
+    font-size: 2vh; letter-spacing: 3px;
+    color: var(--yellow);
+    margin-bottom: 1vh;
+  }
+  .hotkeys-header .chevron { font-size: 2vh; transition: transform 0.15s; }
+  .hotkeys-section.collapsed .hotkeys-body { display: none; }
+  .hotkeys-section.collapsed .hotkeys-header .chevron { transform: rotate(-90deg); }
+  .hotkeys-list {
+    display: flex; flex-direction: column; gap: 0.6vh;
+    margin-bottom: 1vh;
+    max-height: 30vh; overflow-y: auto;
+  }
+  .hotkey-row {
+    display: grid;
+    grid-template-columns: 9vw 1fr 8vw 5vw 3vw;
+    gap: 0.4vw;
+    align-items: center;
+    padding: 0.6vh 0.4vw;
+    background: #0d0907;
+    border: 2px solid var(--orange);
+  }
+  .hotkey-row select, .hotkey-row input {
+    background: #1a1410; color: var(--white);
+    border: 2px solid #3a2820;
+    padding: 0.6vh 0.4vw;
+    font-family: monospace;
+    font-size: 1.4vh;
+    width: 100%;
+  }
+  .hotkey-row select:focus, .hotkey-row input:focus {
+    outline: none; border-color: var(--yellow);
+  }
+  .hotkey-row input.hidden-payload { visibility: hidden; }
+  .hotkey-keys {
+    background: var(--black); color: var(--yellow);
+    border: 2px solid var(--yellow);
+    padding: 0.5vh 0.4vw;
+    font-family: monospace;
+    font-size: 1.3vh;
+    letter-spacing: 1px;
+    text-align: center;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .hotkey-keys.empty { color: #555; border-color: #3a2820; }
+  .hotkey-record, .hotkey-del {
+    padding: 0.5vh 0.2vw;
+    font-family: inherit; font-size: 1.3vh;
+    background: var(--black); color: var(--yellow);
+    border: 2px solid var(--orange);
+    cursor: pointer;
+    letter-spacing: 1px;
+  }
+  .hotkey-record:hover { background: var(--orange); color: var(--black); }
+  .hotkey-record.recording {
+    background: var(--red); color: var(--white);
+    border-color: var(--white);
+    animation: pulse 0.6s infinite;
+  }
+  .hotkey-del:hover { background: var(--red); color: var(--white); border-color: var(--red); }
+  .hotkeys-info {
+    font-size: 1.3vh; color: #888;
+    letter-spacing: 1px;
+    margin-top: 0.6vh;
+  }
+  .hotkeys-info.warn { color: var(--orange-light); }
+
+  /* LIVE PREVIEW SECTION */
+  .preview-area {
+    display: flex; flex-direction: column; gap: 0.4vh;
+    flex-shrink: 0;
+  }
+  .preview-area .section-label { font-size: 1.8vh; }
+  .preview-area.collapsed .preview-content { display: none; }
+  .preview-content {
+    background: #0d0907;
+    border: 3px solid var(--orange);
+    box-shadow: 4px 4px 0 rgba(0,0,0,0.5);
+    display: flex; justify-content: center;
+    padding: 0.3vh;
+    cursor: zoom-in;
+    transition: background 0.15s;
+  }
+  .preview-content:hover { background: #1a1410; }
+  .preview-thumb {
+    display: block;
+    max-width: 100%;
+    max-height: 22vh;
+    aspect-ratio: 16/9;
+    object-fit: contain;
+    background: #000;
+  }
+  .preview-content.expanded {
+    position: fixed;
+    inset: 4vh 6vw;
+    z-index: 1000;
+    background: rgba(0,0,0,0.96);
+    border: 5px solid var(--yellow);
+    box-shadow: 10px 10px 0 rgba(0,0,0,0.7);
+    cursor: zoom-out;
+    padding: 2vh;
+  }
+  .preview-content.expanded .preview-thumb {
+    max-height: none;
+    width: 100%; height: 100%;
+    object-fit: contain;
+  }
+  .preview-thumb:not([src]),
+  .preview-thumb[src=""] { background: #222; }
+
+  /* FAVORITES (quick-access scenes) */
+  .favorites {
+    flex: 0 0 26vw;
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    grid-template-rows: 1fr 1fr;
+    gap: 0.8vh 0.8vw;
+  }
+
+  /* MIC CONTROL — big toggle in now-playing block */
+  .mic-control {
+    position: relative;
+    flex: 0 0 9vw;
+    background: var(--black);
+    border: 4px solid var(--green);
+    display: flex; flex-direction: column;
+    align-items: center; justify-content: center;
+    cursor: pointer;
+    padding: 0.5vh 0.3vw;
+    text-align: center;
+    user-select: none;
+    font-family: inherit;
+    color: var(--white);
+    box-shadow: 6px 6px 0 rgba(0,0,0,0.6);
+    transition: transform 0.05s, background 0.15s;
+  }
+  .mic-control[hidden] { display: none; }
+  .mic-control:hover { background: #1a3a1a; }
+  .mic-control:active { transform: translate(3px, 3px); box-shadow: 3px 3px 0 rgba(0,0,0,0.6); }
+  .mic-control.muted {
+    border-color: var(--red);
+    background: #3a1010;
+    animation: pulse 1s infinite;
+  }
+  .mic-control.muted:hover { background: #5a1010; }
+  .mic-icon { font-size: 4vh; line-height: 1; }
+  .mic-state {
+    font-size: 2vh; font-weight: 900;
+    letter-spacing: 2px;
+    margin-top: 0.3vh;
+    color: var(--green);
+  }
+  .mic-control.muted .mic-state { color: var(--red); }
+  .mic-label {
+    font-size: 1.1vh; letter-spacing: 1px;
+    color: rgba(255,255,255,0.7);
+    margin-top: 0.2vh;
+    overflow: hidden; text-overflow: ellipsis;
+    white-space: nowrap; max-width: 100%;
+  }
+
+  /* MIC PICK BUTTON on meter cards */
+  .mic-pick {
+    background: transparent;
+    border: 2px solid rgba(255,255,255,0.25);
+    color: rgba(255,255,255,0.4);
+    width: 2.4vh; height: 2.4vh;
+    font-size: 1.4vh;
+    padding: 0;
+    cursor: pointer;
+    display: flex; align-items: center; justify-content: center;
+    flex-shrink: 0;
+    margin-right: 0.4vw;
+  }
+  .mic-pick:hover { border-color: var(--yellow); color: var(--yellow); }
+  .mic-pick.selected {
+    background: var(--yellow);
+    color: var(--black);
+    border-color: var(--white);
+  }
+  .fav-slot {
+    position: relative;
+    background: #2a2118;
+    border: 3px dashed #5a4a3a;
+    color: #6a5a48;
+    font-family: inherit;
+    font-size: 1.4vh; letter-spacing: 2px;
+    cursor: default;
+    display: flex; align-items: center; justify-content: center;
+    text-align: center;
+    overflow: hidden;
+  }
+  .fav-slot.filled {
+    background: var(--black);
+    border: 3px solid var(--orange);
+    color: var(--white);
+    font-size: 2.4vh; font-weight: 900;
+    letter-spacing: 1px;
+    cursor: pointer;
+    box-shadow: 4px 4px 0 rgba(0,0,0,0.5);
+    padding: 0.6vh 0.5vw;
+    word-break: break-word;
+    line-height: 1.1;
+    transition: transform 0.06s, background 0.15s;
+  }
+  .fav-slot.filled:hover { background: var(--orange-dark); border-color: var(--yellow); }
+  .fav-slot.filled:active { transform: translate(2px, 2px); }
+  .fav-slot.filled.active {
+    background: var(--yellow);
+    color: var(--black);
+    border-color: var(--white);
+    text-shadow: 1px 1px 0 var(--orange);
+    box-shadow: 0 0 20px var(--yellow-hot), 4px 4px 0 var(--black);
+    animation: glow 2s infinite;
+  }
+
+  /* HOTKEY BADGE — shows the assigned hotkey on the affected element */
+  .hotkey-badge {
+    position: absolute;
+    top: 0.3vh; left: 0.3vw;
+    background: var(--yellow);
+    color: var(--black);
+    font-family: "Consolas", "Courier New", monospace;
+    font-size: 1.1vh;
+    font-weight: bold;
+    padding: 0.15vh 0.4vw;
+    letter-spacing: 1px;
+    border: 2px solid var(--black);
+    box-shadow: 2px 2px 0 rgba(0,0,0,0.5);
+    pointer-events: none;
+    white-space: nowrap;
+    max-width: 8vw;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    z-index: 50;
+  }
+
+  /* STAR BUTTON ON SCENE TILE */
+  .scene-btn { position: relative; }
+  .scene-star {
+    position: absolute;
+    top: 0.4vh; right: 0.4vw;
+    width: 3vh; height: 3vh;
+    background: rgba(0,0,0,0.4);
+    border: 2px solid rgba(255,184,0,0.4);
+    color: rgba(255,184,0,0.5);
+    font-size: 1.8vh;
+    cursor: pointer;
+    display: flex; align-items: center; justify-content: center;
+    padding: 0;
+    font-family: inherit;
+    transition: background 0.1s, color 0.1s;
+  }
+  .scene-btn:hover .scene-star { background: rgba(0,0,0,0.6); color: var(--yellow); border-color: var(--yellow); }
+  .scene-star.on {
+    background: var(--yellow);
+    color: var(--black);
+    border-color: var(--white);
+  }
+  .scene-star.on:hover { background: var(--yellow-hot); }
+
+  /* COLLAPSE TOGGLE */
+  .section-label {
+    cursor: pointer;
+    display: flex; align-items: center; gap: 1vw;
+    user-select: none;
+  }
+  .section-label .chevron {
+    font-size: 2.2vh;
+    transition: transform 0.15s;
+  }
+  .collapsed > .section-label .chevron { transform: rotate(-90deg); }
+  .scenes-area.collapsed .scenes-grid { display: none; }
+  .scenes-area.collapsed { flex: 0 0 auto; }
+  .scenes-area:not(.collapsed) { flex: 1 1 18vh; min-height: 18vh; }
+
+  .meters-area {
+    display: flex; flex-direction: column; gap: 0.4vh;
+    flex-shrink: 0;
+  }
+  .meters-area .section-label {
+    font-size: 1.8vh;
+  }
+  .meters-area.collapsed .audio-meters { display: none; }
+
+  /* SCENES GRID */
+  .scenes-area {
+    flex: 1; min-height: 0;
+    display: flex; flex-direction: column; gap: 1.5vh;
+  }
+  .section-label {
+    font-size: 1.8vh; letter-spacing: 4px;
+    color: var(--yellow);
+    text-shadow: 2px 2px 0 var(--black);
+  }
+  .scenes-grid {
+    flex: 1; min-height: 0;
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(16vw, 1fr));
+    grid-auto-rows: 7vh;
+    gap: 1vh;
+    overflow-y: auto;
+    padding: 0.5vh;
+  }
+  .scene-btn {
+    background: var(--black);
+    color: var(--white);
+    border: 3px solid var(--orange);
+    font-family: inherit;
+    font-size: 2.4vh; font-weight: 900;
+    letter-spacing: 1px;
+    cursor: pointer;
+    padding: 1vh 1vw;
+    text-align: center;
+    box-shadow: 4px 4px 0 rgba(0,0,0,0.5);
+    transition: transform 0.08s, background 0.15s, border-color 0.15s;
+    word-break: break-word;
+  }
+  .scene-btn:hover { background: var(--orange-dark); border-color: var(--yellow); }
+  .scene-btn:active { transform: translate(3px, 3px); }
+  .scene-btn.active {
+    background: var(--yellow);
+    color: var(--black);
+    border-color: var(--white);
+    text-shadow: 2px 2px 0 var(--orange);
+    box-shadow: 0 0 30px var(--yellow-hot), 6px 6px 0 var(--black);
+    animation: glow 2s infinite;
+  }
+  @keyframes glow {
+    0%,100% { box-shadow: 0 0 20px var(--yellow), 6px 6px 0 var(--black); }
+    50%     { box-shadow: 0 0 45px var(--yellow-hot), 6px 6px 0 var(--black); }
+  }
+
+  /* FOOTER */
+  footer {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 1.5vw;
+    padding-top: 0.5vh;
+    flex-shrink: 0;
+  }
+  .control-group {
+    display: flex; flex-direction: column; gap: 0.6vh;
+  }
+  .action-btn {
+    position: relative;
+    padding: 1.6vh 1.5vw;
+    font-family: inherit;
+    font-size: 2.8vh; font-weight: 900;
+    letter-spacing: 3px;
+    border: 4px solid var(--black);
+    background: var(--orange);
+    color: var(--black);
+    cursor: pointer;
+    box-shadow: 6px 6px 0 var(--black);
+    transition: transform 0.06s;
+  }
+  .action-btn:hover { background: var(--yellow); }
+  .action-btn:active { transform: translate(4px, 4px); box-shadow: 4px 4px 0 var(--black); }
+  .action-btn.rec.on { background: var(--red); color: var(--white); animation: pulse 1s infinite; }
+  .action-btn.stream.on { background: var(--green); color: var(--white); }
+
+  .rec-buttons {
+    display: flex; gap: 1vw;
+  }
+  .rec-buttons .action-btn.rec { flex: 1; min-width: 0; }
+  .action-btn.pause {
+    flex: 0 0 22%;
+    font-size: 3.2vh;
+    background: #3a322c;
+    color: #7a6e64;
+    border-color: #1a1410;
+    box-shadow: 8px 8px 0 rgba(0,0,0,0.6);
+    cursor: not-allowed;
+  }
+  .action-btn.pause:hover { background: #3a322c; }
+  .action-btn.pause.enabled {
+    background: var(--yellow);
+    color: var(--black);
+    cursor: pointer;
+  }
+  .action-btn.pause.enabled:hover { background: var(--yellow-hot); }
+  .action-btn.pause.paused {
+    background: var(--green);
+    color: var(--white);
+    border-color: var(--black);
+    cursor: pointer;
+    animation: pulse 1s infinite;
+  }
+  .action-btn.pause.paused:hover { background: #36c885; }
+
+  /* When recording is paused, REC button stops pulsing — solid red "ready to stop" */
+  .action-btn.rec.on.recpaused {
+    animation: none;
+  }
+
+  .clock {
+    font-family: "Consolas", "Courier New", monospace;
+    font-size: 3.6vh; font-weight: bold;
+    color: var(--yellow);
+    text-shadow: 2px 2px 0 var(--black);
+    padding: 0.5vh 1.5vw;
+    display: flex; align-items: center; justify-content: center;
+    background: var(--black);
+    border: 3px solid var(--yellow);
+    letter-spacing: 2px;
+    box-shadow: 4px 4px 0 rgba(0,0,0,0.5);
+  }
+  .clock.inactive { color: #555; }
+
+  /* CONNECTION LIST */
+  .connect-card.hidden { display: none; }
+  .conn-list {
+    display: flex; flex-direction: column; gap: 1.2vh;
+    margin-bottom: 2vh;
+    max-height: 50vh; overflow-y: auto;
+  }
+  .conn-row {
+    display: flex; align-items: stretch; gap: 0.6vw;
+    background: #0d0907;
+    border: 3px solid var(--orange);
+    transition: border-color 0.1s;
+  }
+  .conn-row:hover { border-color: var(--yellow); }
+  .conn-row .conn-pick {
+    flex: 1; min-width: 0;
+    background: transparent;
+    color: var(--white);
+    border: none;
+    padding: 1.6vh 1.4vw;
+    text-align: left;
+    font-family: inherit; cursor: pointer;
+  }
+  .conn-row .conn-pick:hover { background: rgba(255,184,0,0.1); }
+  .conn-name {
+    font-size: 2.6vh; color: var(--yellow);
+    letter-spacing: 2px;
+    text-shadow: 2px 2px 0 var(--black);
+  }
+  .conn-host {
+    font-size: 1.6vh; color: #aaa;
+    font-family: monospace; letter-spacing: 1px;
+    margin-top: 0.3vh;
+  }
+  .conn-action {
+    background: var(--black);
+    color: var(--yellow);
+    border: none;
+    border-left: 3px solid var(--orange);
+    font-family: inherit;
+    font-size: 2.4vh;
+    padding: 0 1vw; min-width: 4vw;
+    cursor: pointer;
+  }
+  .conn-action:hover { background: var(--orange); color: var(--black); }
+  .conn-action.danger:hover { background: var(--red); color: var(--white); }
+  .conn-empty {
+    text-align: center;
+    padding: 3vh 1vw;
+    color: #888; font-size: 2vh;
+    letter-spacing: 2px;
+    border: 3px dashed #555;
+  }
+  .conn-tools {
+    display: flex; gap: 1vw;
+    margin-top: 1.5vh;
+  }
+  .btn-small {
+    flex: 1;
+    background: var(--black);
+    color: var(--white);
+    border: 3px solid var(--orange);
+    padding: 1.4vh 1vw;
+    font-family: inherit;
+    font-size: 1.8vh; letter-spacing: 2px;
+    cursor: pointer;
+    box-shadow: 4px 4px 0 var(--black);
+  }
+  .btn-small:hover { background: var(--orange); color: var(--black); }
+  .btn-secondary {
+    background: #3a322c;
+    color: var(--white);
+    border: 4px solid var(--black);
+    padding: 2vh 3vw;
+    font-family: inherit;
+    font-size: 3vh; font-weight: 900;
+    letter-spacing: 3px;
+    cursor: pointer;
+    box-shadow: 6px 6px 0 var(--black);
+  }
+  .btn-secondary:hover { background: #5a4d44; }
+  .edit-actions {
+    display: flex; gap: 1vw; margin-top: 1vh;
+  }
+  .edit-actions .btn { flex: 2; }
+  .edit-actions .btn-secondary { flex: 1; }
+
+  /* STATS BOX (mem/cpu/net of the app) */
+  .stats-box {
+    position: relative;
+    display: flex; flex-direction: column;
+    font-family: "Consolas", "Courier New", monospace;
+    font-size: 1.1vh; line-height: 1.35;
+    color: var(--white);
+    background: rgba(0,0,0,0.4);
+    border: 2px solid rgba(255,184,0,0.3);
+    padding: 0.3vh 0.5vw;
+    min-width: 7vw;
+    cursor: help;
+  }
+  .stats-box > .stats-line {
+    display: flex; justify-content: space-between; gap: 0.4vw;
+    white-space: nowrap;
+  }
+  .stats-label {
+    color: var(--yellow);
+    letter-spacing: 1px;
+    font-weight: bold;
+  }
+  .stats-box:hover { border-color: var(--yellow); }
+
+  /* big overlay on hover */
+  .stats-overlay {
+    position: absolute;
+    top: calc(100% + 0.6vh);
+    right: 0;
+    background: var(--black);
+    border: 4px solid var(--yellow);
+    padding: 1.4vh 1.6vw;
+    box-shadow: 6px 6px 0 rgba(0,0,0,0.6);
+    font-family: "Consolas", "Courier New", monospace;
+    color: var(--white);
+    white-space: nowrap;
+    z-index: 200;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.12s;
+  }
+  .stats-box:hover .stats-overlay { opacity: 1; }
+  .stats-overlay-row {
+    display: flex; align-items: baseline; gap: 1vw;
+    font-size: 3vh; line-height: 1.3;
+    letter-spacing: 1px;
+  }
+  .stats-overlay-row .stats-label { font-size: 2vh; min-width: 4vw; }
+
+  /* SWITCH CONNECTION BUTTON IN HEADER */
+  .switch-conn {
+    background: var(--black);
+    color: var(--yellow);
+    border: 3px solid var(--yellow);
+    padding: 1vh 1.4vw;
+    font-family: inherit;
+    font-size: 1.8vh; letter-spacing: 2px;
+    cursor: pointer;
+    box-shadow: 4px 4px 0 rgba(0,0,0,0.5);
+  }
+  .switch-conn:hover { background: var(--yellow); color: var(--black); }
+  .switch-conn .conn-tag {
+    display: block;
+    font-size: 1.4vh; color: #aaa; letter-spacing: 1px;
+  }
+  .switch-conn:hover .conn-tag { color: var(--black); }
+
+  /* AUDIO METERS */
+  .audio-meters {
+    display: flex; gap: 0.8vw;
+    overflow-x: auto;
+    padding: 0.3vh 0;
+    min-height: 0;
+    flex-shrink: 0;
+  }
+  .audio-meters:empty { display: none; }
+  .meter-card {
+    flex: 0 0 auto;
+    min-width: 12vw; max-width: 20vw;
+    background: var(--black);
+    border: 2px solid var(--orange);
+    padding: 0.5vh 0.7vw;
+    box-shadow: 3px 3px 0 rgba(0,0,0,0.5);
+  }
+  .meter-header {
+    display: flex; align-items: baseline; gap: 0.6vw;
+    margin-bottom: 0.6vh;
+  }
+  .meter-name {
+    flex: 1; min-width: 0;
+    font-size: 1.8vh; letter-spacing: 2px;
+    color: var(--yellow);
+    text-shadow: 1px 1px 0 var(--black);
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .meter-db {
+    font-family: "Consolas", monospace;
+    font-size: 1.4vh; color: var(--white);
+    letter-spacing: 1px;
+    flex-shrink: 0;
+  }
+  .meter-controls {
+    display: flex; gap: 0.4vw;
+    margin-top: 0.6vh;
+  }
+  .meter-btn {
+    flex: 1;
+    background: #0a0a0a;
+    border: 2px solid var(--orange);
+    color: var(--yellow);
+    font-family: inherit;
+    font-size: 1.8vh; font-weight: 900;
+    padding: 0.6vh 0;
+    cursor: pointer;
+    transition: background 0.1s;
+  }
+  .meter-btn:hover { background: var(--orange); color: var(--black); }
+  .meter-btn:active { background: var(--yellow); color: var(--black); }
+  .meter-btn.mute { flex: 1.2; }
+  .meter-btn.mute.on {
+    background: var(--red);
+    color: var(--white);
+    border-color: var(--red);
+  }
+  .meter-card.muted .meter-fill { background: #444 !important; }
+  .meter-card.muted .meter-peak { display: none; }
+  .meter-card.muted .meter-name { color: #888; text-decoration: line-through; }
+  .meter-card.muted .meter-db { color: #888; }
+
+  /* VOLUME FADER */
+  .meter-fader {
+    position: relative;
+    height: 1.6vh;
+    margin-top: 0.8vh;
+    background: #1a1410;
+    border: 2px solid var(--orange-dark);
+    cursor: ew-resize;
+    user-select: none;
+    touch-action: none;
+  }
+  .meter-fader-fill {
+    position: absolute; top: 0; left: 0; bottom: 0;
+    background: linear-gradient(to right, var(--orange-dark) 0%, var(--orange) 70%, var(--yellow) 100%);
+    width: 0%;
+    pointer-events: none;
+  }
+  .meter-fader-tick0 {
+    position: absolute;
+    top: -0.5vh; bottom: -0.5vh;
+    width: 2px; background: var(--white);
+    left: 100%; transform: translateX(-1px);
+    pointer-events: none;
+    box-shadow: 0 0 4px rgba(255,255,255,0.5);
+  }
+  .meter-fader-thumb {
+    position: absolute;
+    top: 50%;
+    width: 0.9vw; min-width: 12px;
+    height: 2.6vh;
+    background: var(--yellow);
+    border: 2px solid var(--black);
+    transform: translate(-50%, -50%);
+    left: 0%;
+    box-shadow: 2px 2px 0 rgba(0,0,0,0.6);
+    pointer-events: none;
+    transition: background 0.1s;
+  }
+  .meter-fader:hover .meter-fader-thumb { background: var(--yellow-hot); }
+  .meter-fader.dragging .meter-fader-thumb {
+    background: var(--white);
+    transition: none;
+  }
+  .meter-card.muted .meter-fader-fill { background: #555; }
+  .meter-card.muted .meter-fader-thumb { background: #888; }
+  .meter-bar {
+    position: relative;
+    height: 1.2vh; margin-bottom: 0.4vh;
+    background: #0a0a0a;
+    border: 1px solid #333;
+    overflow: hidden;
+  }
+  .meter-bar:last-child { margin-bottom: 0; }
+  .meter-fill {
+    position: absolute; top: 0; left: 0; bottom: 0;
+    background: linear-gradient(to right, var(--green) 0%, var(--green) 60%, var(--yellow) 75%, var(--orange-light) 88%, var(--red) 100%);
+    width: 0%;
+    transition: width 0.05s linear;
+  }
+  .meter-peak {
+    position: absolute; top: 0; bottom: 0;
+    width: 2px; background: var(--white);
+    left: 0%;
+    transition: left 0.2s ease-out;
+    box-shadow: 0 0 4px var(--white);
+  }
+  .meter-bar.muted .meter-fill { background: #444; }
+  .meter-bar.muted .meter-peak { background: #666; box-shadow: none; }
+
+  /* YOUTUBE THUMBS ROW */
+  .yt-row {
+    display: flex; gap: 0.4vw;
+    overflow-x: auto;
+    padding: 0.5vh 0.3vw;
+    flex-shrink: 0;
+    background: rgba(0,0,0,0.35);
+    border-top: 2px solid rgba(255,184,0,0.3);
+    margin-top: 1.5vh;
+  }
+  .yt-row:empty { display: none; }
+  .yt-thumb {
+    position: relative;
+    flex: 0 0 auto;
+    width: 11vw;
+    aspect-ratio: 16 / 9;
+    background: #0a0a0a;
+    border: 2px solid var(--orange);
+    text-decoration: none;
+    overflow: hidden;
+    transition: transform 0.1s, border-color 0.15s;
+  }
+  .yt-thumb:hover {
+    border-color: var(--yellow);
+    z-index: 10;
+  }
+  .yt-thumb img {
+    width: 100%; height: 100%;
+    object-fit: cover; display: block;
+  }
+  .yt-title {
+    position: absolute; bottom: 0; left: 0; right: 0;
+    background: rgba(0,0,0,0.92);
+    color: var(--white);
+    font-size: 1.4vh;
+    line-height: 1.3;
+    letter-spacing: 0.5px;
+    padding: 0.6vh 0.5vw;
+    max-height: 100%;
+    overflow: hidden;
+    opacity: 0;
+    transition: opacity 0.15s;
+    border-top: 2px solid var(--yellow);
+  }
+  .yt-thumb:hover .yt-title {
+    opacity: 1;
+  }
+
+  /* SCROLLBAR */
+  .scenes-grid::-webkit-scrollbar { width: 14px; }
+  .scenes-grid::-webkit-scrollbar-track { background: rgba(0,0,0,0.3); }
+  .scenes-grid::-webkit-scrollbar-thumb { background: var(--yellow); border: 2px solid var(--black); }
+</style>
+</head>
+<body>
+
+<div class="overlay" id="connectOverlay">
+
+  <div class="connect-card" id="listView">
+    <h2>OBS VERBINDUNG</h2>
+    <div class="conn-list" id="connList"></div>
+    <button class="btn btn-block" id="addNewBtn">+ NEUE VERBINDUNG</button>
+    <div class="conn-tools">
+      <button class="btn-small" id="exportBtn">⬇ JSON EXPORT</button>
+      <button class="btn-small" id="importBtn">⬆ JSON IMPORT</button>
+      <input type="file" id="importFile" accept=".json" style="display:none" />
+    </div>
+    <div class="error" id="listError"></div>
+  </div>
+
+  <div class="connect-card hidden" id="editView">
+    <h2 id="editTitle">NEUE VERBINDUNG</h2>
+    <div class="field">
+      <label>NAME (z.B. Streaming-PC)</label>
+      <input type="text" id="connName" placeholder="OBS 1" />
+    </div>
+    <div class="field">
+      <label>HOST</label>
+      <input type="text" id="host" value="localhost" />
+    </div>
+    <div class="field">
+      <label>PORT</label>
+      <input type="text" id="port" value="4455" />
+    </div>
+    <div class="field">
+      <label>PASSWORT</label>
+      <input type="password" id="password" />
+    </div>
+
+    <div class="edit-actions">
+      <button class="btn" id="saveAndConnectBtn">SPEICHERN &amp; VERBINDEN</button>
+      <button class="btn-secondary" id="cancelEditBtn">ZURÜCK</button>
+    </div>
+    <div class="error" id="errorBox"></div>
+  </div>
+
+</div>
+
+<div class="app">
+  <header>
+    <a class="logo" href="https://www.youtube.com/@lieblingstypen/playlists" target="_blank" rel="noopener noreferrer" title="Zum Lieblingstypen YouTube-Kanal"></a>
+    <div>
+      <div class="title">LIEBLINGSTYPEN</div>
+      <div class="subtitle">OBS REMOTE CONTROL</div>
+    </div>
+    <div class="status-strip">
+      <button class="switch-conn" id="switchConnBtn">
+        WECHSELN
+        <span class="conn-tag" id="currentConnTag">—</span>
+      </button>
+      <button class="switch-conn" id="openHotkeysBtn" hidden>
+        ⌨ HOTKEYS
+      </button>
+      <div class="stats-box" id="statsBox" title="Ressourcen-Verbrauch der App">
+        <div class="stats-line"><span class="stats-label">MEM</span><span data-stat="mem">—</span></div>
+        <div class="stats-line"><span class="stats-label">CPU</span><span data-stat="cpu">—</span></div>
+        <div class="stats-line"><span class="stats-label">NET</span><span data-stat="net">—</span></div>
+        <div class="stats-overlay">
+          <div class="stats-overlay-row"><span class="stats-label">MEM</span><span data-stat="mem">—</span></div>
+          <div class="stats-overlay-row"><span class="stats-label">CPU</span><span data-stat="cpu">—</span></div>
+          <div class="stats-overlay-row"><span class="stats-label">NET</span><span data-stat="net">—</span></div>
+        </div>
+      </div>
+      <div class="pill" id="recPill"><span class="dot"></span><span id="recLabel">REC</span></div>
+      <div class="pill" id="streamPill"><span class="dot"></span><span>LIVE</span></div>
+    </div>
+  </header>
+
+  <div class="now-playing">
+    <div class="now-label">AKTIVE SZENE</div>
+    <div class="now-scene" id="nowScene">—</div>
+    <div class="favorites" id="favorites"></div>
+    <button class="mic-control" id="micControl" type="button" hidden>
+      <div class="mic-icon" id="micIcon">🎤</div>
+      <div class="mic-state" id="micState">LIVE</div>
+      <div class="mic-label" id="micLabel">—</div>
+    </button>
+  </div>
+
+  <div class="meters-area" id="metersArea">
+    <div class="section-label" id="metersToggle">
+      <span class="chevron">▼</span>
+      <span>AUDIO PEGEL</span>
+    </div>
+    <div class="audio-meters" id="audioMeters"></div>
+  </div>
+
+  <div class="preview-area collapsed" id="previewArea">
+    <div class="section-label" id="previewToggle">
+      <span class="chevron">▼</span>
+      <span>LIVE VORSCHAU</span>
+    </div>
+    <div class="preview-content">
+      <img class="preview-thumb" id="previewThumb" alt="" />
+    </div>
+  </div>
+
+  <div class="scenes-area" id="scenesArea">
+    <div class="section-label" id="scenesToggle">
+      <span class="chevron">▼</span>
+      <span>ALLE SZENEN</span>
+    </div>
+    <div class="scenes-grid" id="scenesGrid"></div>
+  </div>
+
+  <footer>
+    <div class="control-group">
+      <div class="clock inactive" id="recClock">REC  00:00:00</div>
+      <div class="rec-buttons">
+        <button class="action-btn rec" id="recBtn">● AUFNAHME</button>
+        <button class="action-btn pause" id="pauseBtn">❚❚ PAUSE</button>
+      </div>
+    </div>
+    <div class="control-group">
+      <div class="clock inactive" id="streamClock">LIVE  00:00:00</div>
+      <button class="action-btn stream" id="streamBtn">▶ LIVE</button>
+    </div>
+  </footer>
+
+  <div class="yt-row" id="ytRow"></div>
+</div>
+
+<script type="module">
+  import OBSWebSocket from "https://cdn.jsdelivr.net/npm/obs-websocket-js@5.0.6/+esm";
+
+  const obs = new OBSWebSocket();
+
+  const overlay = document.getElementById("connectOverlay");
+  const errorBox = document.getElementById("errorBox");
+  const listError = document.getElementById("listError");
+  const scenesGrid = document.getElementById("scenesGrid");
+  const recBtn = document.getElementById("recBtn");
+  const pauseBtn = document.getElementById("pauseBtn");
+  const streamBtn = document.getElementById("streamBtn");
+  const recPill = document.getElementById("recPill");
+  const streamPill = document.getElementById("streamPill");
+  const recLabel = document.getElementById("recLabel");
+  const recClock = document.getElementById("recClock");
+  const streamClock = document.getElementById("streamClock");
+  const nowScene = document.getElementById("nowScene");
+  const audioMeters = document.getElementById("audioMeters");
+  const currentConnTag = document.getElementById("currentConnTag");
+  const listView = document.getElementById("listView");
+  const editView = document.getElementById("editView");
+  const favoritesEl = document.getElementById("favorites");
+  const scenesArea = document.getElementById("scenesArea");
+  const scenesToggle = document.getElementById("scenesToggle");
+  const metersArea = document.getElementById("metersArea");
+  const metersToggle = document.getElementById("metersToggle");
+  const micControl = document.getElementById("micControl");
+  const micIcon = document.getElementById("micIcon");
+  const micState = document.getElementById("micState");
+  const micLabel = document.getElementById("micLabel");
+  const previewThumb = document.getElementById("previewThumb");
+  const previewToggle = document.getElementById("previewToggle");
+  const previewArea = document.getElementById("previewArea");
+  const hotkeysOverlay = document.getElementById("hotkeysOverlay");
+  const openHotkeysBtn = document.getElementById("openHotkeysBtn");
+  const hotkeysList = document.getElementById("hotkeysList");
+  const hotkeysInfo = document.getElementById("hotkeysInfo");
+  function setStat(name, value) {
+    document.querySelectorAll(`[data-stat="${name}"]`).forEach(el => el.textContent = value);
+  }
+
+  // Are we running inside the C# WebView2 host (i.e. can global hotkeys work)?
+  const isHosted = !!(window.chrome && window.chrome.webview);
+
+  const HOTKEY_ACTIONS = [
+    { id: "switchScene",    label: "Szene wechseln",            payload: "sceneName" },
+    { id: "toggleRecord",   label: "Aufnahme an/aus",           payload: null },
+    { id: "togglePause",    label: "Aufnahme pause/weiter",     payload: null },
+    { id: "toggleStream",   label: "Stream an/aus",             payload: null },
+    { id: "toggleMyMicMute",label: "Mikro stumm/laut",          payload: null },
+    { id: "myMicLouder",    label: "Mikro +3 dB",               payload: null },
+    { id: "myMicQuieter",   label: "Mikro −3 dB",               payload: null },
+    { id: "favorite1",      label: "Favorit 1",                 payload: null },
+    { id: "favorite2",      label: "Favorit 2",                 payload: null },
+    { id: "favorite3",      label: "Favorit 3",                 payload: null },
+    { id: "favorite4",      label: "Favorit 4",                 payload: null },
+  ];
+
+  // KeyboardEvent.code → Win32 virtual-key code
+  const VK_BY_CODE = (() => {
+    const m = {};
+    for (let i = 1; i <= 24; i++) m["F" + i] = 0x6F + i; // F1=0x70..F24=0x87
+    for (let i = 0; i <= 9; i++) {
+      m["Digit" + i] = 0x30 + i;
+      m["Numpad" + i] = 0x60 + i;
+    }
+    for (let i = 0; i < 26; i++) m["Key" + String.fromCharCode(65 + i)] = 0x41 + i;
+    Object.assign(m, {
+      NumpadAdd: 0x6B, NumpadSubtract: 0x6D, NumpadMultiply: 0x6A,
+      NumpadDivide: 0x6F, NumpadDecimal: 0x6E, NumpadEnter: 0x0D,
+      ArrowLeft: 0x25, ArrowUp: 0x26, ArrowRight: 0x27, ArrowDown: 0x28,
+      Space: 0x20, Enter: 0x0D, Tab: 0x09, Escape: 0x1B,
+      Insert: 0x2D, Delete: 0x2E, Home: 0x24, End: 0x23,
+      PageUp: 0x21, PageDown: 0x22, Backspace: 0x08,
+    });
+    return m;
+  })();
+
+  const MOD_ALT = 1, MOD_CTRL = 2, MOD_SHIFT = 4, MOD_WIN = 8, MOD_NOREPEAT = 0x4000;
+
+  let hotkeys = [];                  // [{id, action, payload, mods, vkey}] — runtime (active conn)
+  let availableScenes = [];          // current scene names for the dropdown
+  let recordingHotkeyRow = null;     // currently capturing
+
+
+  let currentScene = null;
+  let recording = false;
+  let paused = false;
+  let streaming = false;
+  let recordStart = null;
+  let streamStart = null;
+  let totalPauseMs = 0;
+  let pauseStart = null;
+  let favorites = [];
+  let scenesCollapsed = false;
+  let metersCollapsed = false;
+  let myMicInputName = "";
+  let myMicMuted = false;
+  let previewEnabled = false;
+  let previewInterval = null;
+  let previewInFlight = false;
+  const PREVIEW_FPS = 2;
+  const PREVIEW_W = 320, PREVIEW_H = 180, PREVIEW_QUALITY = 60;
+
+  const SUBS_BASE = 2047;            // all standard events
+  const SUBS_METERS = 65536;          // InputVolumeMeters (high-volume)
+
+  function showError(msg) {
+    errorBox.textContent = msg;
+    errorBox.classList.add("show");
+  }
+  function clearError() {
+    errorBox.classList.remove("show");
+  }
+  function showListError(msg) {
+    listError.textContent = msg;
+    listError.classList.add("show");
+    setTimeout(() => listError.classList.remove("show"), 3500);
+  }
+
+  // ─── CONNECTION MANAGEMENT ──────────────────────────
+  const LS_KEY = "obsRemoteConnections";
+  let connections = [];
+  let currentConnId = null;
+  let editingId = null;
+
+  function randomId() { return Math.random().toString(36).slice(2, 10); }
+
+  function escapeHtml(s) {
+    return String(s || "").replace(/[<>&"']/g, c =>
+      ({"<":"&lt;",">":"&gt;","&":"&amp;",'"':"&quot;","'":"&#39;"}[c]));
+  }
+
+  function loadConnections() {
+    try {
+      const data = JSON.parse(localStorage.getItem(LS_KEY) || "null");
+      if (Array.isArray(data)) { connections = data; return; }
+      const legacy = JSON.parse(localStorage.getItem("obsRemote") || "null");
+      if (legacy && legacy.host) {
+        connections = [{
+          id: randomId(),
+          name: "OBS",
+          host: legacy.host,
+          port: legacy.port || "4455",
+          password: legacy.password || ""
+        }];
+        saveConnections();
+        localStorage.removeItem("obsRemote");
+      }
+    } catch {}
+  }
+  function saveConnections() {
+    localStorage.setItem(LS_KEY, JSON.stringify(connections));
+  }
+
+  function showListView() {
+    listView.classList.remove("hidden");
+    editView.classList.add("hidden");
+    renderConnList();
+  }
+  function showEditView(id) {
+    listView.classList.add("hidden");
+    editView.classList.remove("hidden");
+    clearError();
+    editingId = id || null;
+    const conn = id ? connections.find(c => c.id === id) : null;
+    document.getElementById("editTitle").textContent = conn ? "VERBINDUNG BEARBEITEN" : "NEUE VERBINDUNG";
+    document.getElementById("connName").value = conn?.name || "";
+    document.getElementById("host").value = conn?.host || "localhost";
+    document.getElementById("port").value = conn?.port || "4455";
+    document.getElementById("password").value = conn?.password || "";
+    document.getElementById("connName").focus();
+  }
+
+  function renderConnList() {
+    const list = document.getElementById("connList");
+    list.innerHTML = "";
+    if (connections.length === 0) {
+      const empty = document.createElement("div");
+      empty.className = "conn-empty";
+      empty.textContent = "NOCH KEINE VERBINDUNGEN — UNTEN ANLEGEN";
+      list.appendChild(empty);
+      return;
+    }
+    connections.forEach(c => {
+      const row = document.createElement("div");
+      row.className = "conn-row";
+      row.innerHTML =
+        `<button class="conn-pick" data-pick="${c.id}">` +
+        `<div class="conn-name">${escapeHtml(c.name)}</div>` +
+        `<div class="conn-host">${escapeHtml(c.host)}:${escapeHtml(c.port)}</div>` +
+        `</button>` +
+        `<button class="conn-action" data-edit="${c.id}" title="Bearbeiten">⚙</button>` +
+        `<button class="conn-action danger" data-delete="${c.id}" title="Löschen">✕</button>`;
+      list.appendChild(row);
+    });
+  }
+
+  async function connectToConn(conn) {
+    clearError();
+    const url = `ws://${conn.host}:${conn.port}`;
+    loadConnSettings(conn.id);
+    const subs = SUBS_BASE | (metersCollapsed ? 0 : SUBS_METERS);
+    try {
+      await obs.connect(url, conn.password, { eventSubscriptions: subs });
+      currentConnId = conn.id;
+      currentConnTag.textContent = conn.name;
+      scenesArea.classList.toggle("collapsed", scenesCollapsed);
+      metersArea.classList.toggle("collapsed", metersCollapsed);
+      overlay.classList.add("hidden");
+      await refreshAll();
+      applyPreviewState();
+      pushHotkeysToHost();
+      openHotkeysBtn.hidden = !isHosted;
+    } catch (err) {
+      listView.classList.remove("hidden");
+      editView.classList.add("hidden");
+      renderConnList();
+      showListError("FEHLER: " + (err.message || err));
+    }
+  }
+
+  async function saveAndConnect() {
+    const name = document.getElementById("connName").value.trim();
+    const host = document.getElementById("host").value.trim();
+    const port = document.getElementById("port").value.trim();
+    const pw = document.getElementById("password").value;
+    if (!name) { showError("NAME FEHLT"); return; }
+    if (!host || !port) { showError("HOST ODER PORT FEHLT"); return; }
+    let conn;
+    if (editingId) {
+      conn = connections.find(c => c.id === editingId);
+      Object.assign(conn, { name, host, port, password: pw });
+    } else {
+      conn = { id: randomId(), name, host, port, password: pw };
+      connections.push(conn);
+    }
+    saveConnections();
+    editingId = null;
+    await connectToConn(conn);
+  }
+
+  function deleteConn(id) {
+    const conn = connections.find(c => c.id === id);
+    if (!conn) return;
+    if (!confirm(`Verbindung "${conn.name}" wirklich löschen?`)) return;
+    connections = connections.filter(c => c.id !== id);
+    saveConnections();
+    renderConnList();
+  }
+
+  function exportJson() {
+    const exported = connections.map(c => {
+      let favs = [], scCol = false, mtCol = false, mic = "", prev = false;
+      try {
+        const s = JSON.parse(localStorage.getItem(settingsKey(c.id)) || "{}");
+        if (Array.isArray(s.favorites)) favs = s.favorites;
+        if (typeof s.scenesCollapsed === "boolean") scCol = s.scenesCollapsed;
+        if (typeof s.metersCollapsed === "boolean") mtCol = s.metersCollapsed;
+        if (typeof s.myMicInputName === "string") mic = s.myMicInputName;
+        if (typeof s.previewEnabled === "boolean") prev = s.previewEnabled;
+      } catch {}
+      return { ...c, favorites: favs, scenesCollapsed: scCol, metersCollapsed: mtCol, myMicInputName: mic, previewEnabled: prev };
+    });
+    const blob = new Blob([JSON.stringify(exported, null, 2)], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = "obs-connections.json";
+    a.click();
+    URL.revokeObjectURL(url);
+    showListError(`${connections.length} VERBINDUNGEN EXPORTIERT`);
+  }
+
+  async function importJson(file) {
+    try {
+      const text = await file.text();
+      const data = JSON.parse(text);
+      if (!Array.isArray(data)) throw new Error("kein JSON-Array");
+      const incoming = data.filter(c => c && c.host);
+      let added = 0, updated = 0;
+      incoming.forEach(c => {
+        const conn = {
+          id: c.id || randomId(),
+          name: c.name || (c.host + ":" + c.port),
+          host: c.host,
+          port: c.port || "4455",
+          password: c.password || ""
+        };
+        const settings = {
+          favorites: Array.isArray(c.favorites) ? c.favorites.slice(0, 4) : [],
+          scenesCollapsed: !!c.scenesCollapsed,
+          metersCollapsed: !!c.metersCollapsed,
+          myMicInputName: typeof c.myMicInputName === "string" ? c.myMicInputName : "",
+          previewEnabled: !!c.previewEnabled
+        };
+        const idx = connections.findIndex(e => e.name === conn.name);
+        if (idx >= 0) {
+          conn.id = connections[idx].id;
+          connections[idx] = conn;
+          updated++;
+        } else {
+          connections.push(conn);
+          added++;
+        }
+        localStorage.setItem(settingsKey(conn.id), JSON.stringify(settings));
+        // If user is currently connected to this one, refresh in-memory state
+        if (currentConnId === conn.id) {
+          const prevMetersCollapsed = metersCollapsed;
+          favorites = settings.favorites;
+          scenesCollapsed = settings.scenesCollapsed;
+          metersCollapsed = settings.metersCollapsed;
+          myMicInputName = settings.myMicInputName;
+          scenesArea.classList.toggle("collapsed", scenesCollapsed);
+          metersArea.classList.toggle("collapsed", metersCollapsed);
+          renderFavorites();
+          document.querySelectorAll(".scene-btn .scene-star").forEach(star => {
+            const name = star.parentElement.dataset.scene;
+            const isFav = favorites.includes(name);
+            star.classList.toggle("on", isFav);
+            star.textContent = isFav ? "★" : "☆";
+          });
+          document.querySelectorAll(".mic-pick").forEach(btn => {
+            btn.classList.toggle("selected", btn.dataset.input === myMicInputName);
+          });
+          refreshMicControl();
+          previewEnabled = settings.previewEnabled;
+          applyPreviewState();
+          if (prevMetersCollapsed !== metersCollapsed) {
+            if (metersCollapsed) {
+              audioMeters.innerHTML = "";
+              meterCards.clear();
+            }
+            const subs = SUBS_BASE | (metersCollapsed ? 0 : SUBS_METERS);
+            obs.reidentify({ eventSubscriptions: subs }).catch(e => console.error(e));
+          }
+        }
+      });
+      saveConnections();
+      renderConnList();
+      showListError(`${added} NEU, ${updated} AKTUALISIERT`);
+    } catch (err) {
+      showListError("IMPORT FEHLER: " + err.message);
+    }
+  }
+
+  async function refreshAll() {
+    const { scenes, currentProgramSceneName } = await obs.call("GetSceneList");
+    currentScene = currentProgramSceneName;
+    nowScene.textContent = currentScene || "—";
+    availableScenes = [...scenes].reverse().map(s => s.sceneName);
+    const validNames = new Set(scenes.map(s => s.sceneName));
+    const cleaned = favorites.filter(n => validNames.has(n));
+    if (cleaned.length !== favorites.length) {
+      favorites = cleaned;
+      saveConnSettings();
+    }
+    renderScenes(scenes);
+    renderFavorites();
+    refreshMicControl();
+    refreshHotkeyBadges();
+
+    const recStatus = await obs.call("GetRecordStatus");
+    recording = recStatus.outputActive;
+    paused = !!recStatus.outputPaused;
+    if (recording) {
+      recordStart = Date.now() - (recStatus.outputDuration || 0);
+      totalPauseMs = 0;
+      pauseStart = paused ? Date.now() : null;
+    }
+    updateRecUI();
+    updatePauseUI();
+
+    const streamStatus = await obs.call("GetStreamStatus");
+    streaming = streamStatus.outputActive;
+    if (streaming) streamStart = Date.now() - (streamStatus.outputDuration || 0);
+    updateStreamUI();
+  }
+
+  // ─── PER-CONNECTION SETTINGS (favorites, ui) ────────
+  function settingsKey(connId) { return "obsRemoteSettings_" + connId; }
+
+  function loadConnSettings(connId) {
+    try {
+      const s = JSON.parse(localStorage.getItem(settingsKey(connId)) || "{}");
+      favorites = Array.isArray(s.favorites) ? s.favorites.slice(0, 4) : [];
+      scenesCollapsed = !!s.scenesCollapsed;
+      metersCollapsed = !!s.metersCollapsed;
+      myMicInputName = typeof s.myMicInputName === "string" ? s.myMicInputName : "";
+      previewEnabled = !!s.previewEnabled;
+      hotkeys = Array.isArray(s.hotkeys) ? s.hotkeys : [];
+    } catch {
+      favorites = []; scenesCollapsed = false; metersCollapsed = false;
+      myMicInputName = ""; previewEnabled = false; hotkeys = [];
+    }
+  }
+  function saveConnSettings() {
+    if (!currentConnId) return;
+    localStorage.setItem(settingsKey(currentConnId), JSON.stringify({
+      favorites, scenesCollapsed, metersCollapsed, myMicInputName, previewEnabled, hotkeys
+    }));
+  }
+
+  // ─── HOTKEYS ────────────────────────────────────────
+  function vkeyDisplayName(vkey) {
+    if (vkey >= 0x70 && vkey <= 0x87) return "F" + (vkey - 0x6F);
+    if (vkey >= 0x30 && vkey <= 0x39) return String.fromCharCode(vkey);
+    if (vkey >= 0x41 && vkey <= 0x5A) return String.fromCharCode(vkey);
+    if (vkey >= 0x60 && vkey <= 0x69) return "Num " + (vkey - 0x60);
+    const named = {
+      0x6B: "Num +", 0x6D: "Num -", 0x6A: "Num *", 0x6F: "Num /", 0x6E: "Num .",
+      0x25: "←", 0x26: "↑", 0x27: "→", 0x28: "↓",
+      0x20: "Space", 0x0D: "Enter", 0x09: "Tab", 0x1B: "Esc",
+      0x2D: "Ins", 0x2E: "Del", 0x24: "Home", 0x23: "End",
+      0x21: "PgUp", 0x22: "PgDn", 0x08: "Backspace"
+    };
+    return named[vkey] || ("VK_" + vkey.toString(16));
+  }
+
+  function fmtHotkey(mods, vkey) {
+    if (!vkey) return "— keine Taste —";
+    const parts = [];
+    if (mods & MOD_CTRL)  parts.push("Strg");
+    if (mods & MOD_SHIFT) parts.push("Shift");
+    if (mods & MOD_ALT)   parts.push("Alt");
+    if (mods & MOD_WIN)   parts.push("Win");
+    parts.push(vkeyDisplayName(vkey));
+    return parts.join(" + ");
+  }
+
+  function renderHotkeysList() {
+    hotkeysList.innerHTML = "";
+    if (!isHosted) {
+      hotkeysInfo.classList.add("warn");
+      hotkeysInfo.textContent = "⚠ Browser-Modus erkannt — globale Hotkeys greifen NUR in der .exe.";
+    } else {
+      hotkeysInfo.classList.remove("warn");
+      hotkeysInfo.textContent = "Globale Hotkeys: funktionieren auch wenn ein anderes Programm Fokus hat.";
+    }
+    hotkeys.forEach((hk, idx) => {
+      const row = document.createElement("div");
+      row.className = "hotkey-row";
+      row.dataset.idx = idx;
+
+      const sel = document.createElement("select");
+      HOTKEY_ACTIONS.forEach(a => {
+        const o = document.createElement("option");
+        o.value = a.id; o.textContent = a.label;
+        if (a.id === hk.action) o.selected = true;
+        sel.appendChild(o);
+      });
+      sel.addEventListener("change", () => {
+        hk.action = sel.value;
+        const def = HOTKEY_ACTIONS.find(a => a.id === sel.value);
+        sceneSel.classList.toggle("hidden-payload", !def?.payload);
+      });
+      row.appendChild(sel);
+
+      const sceneSel = document.createElement("select");
+      const noneOpt = document.createElement("option");
+      noneOpt.value = ""; noneOpt.textContent = "— Szene wählen —";
+      sceneSel.appendChild(noneOpt);
+      const currentSceneName = hk.payload?.sceneName || "";
+      let foundCurrent = false;
+      availableScenes.forEach(name => {
+        const o = document.createElement("option");
+        o.value = name; o.textContent = name;
+        if (name === currentSceneName) { o.selected = true; foundCurrent = true; }
+        sceneSel.appendChild(o);
+      });
+      // If the stored scene isn't in the current OBS, still show it (marked)
+      if (currentSceneName && !foundCurrent) {
+        const o = document.createElement("option");
+        o.value = currentSceneName;
+        o.textContent = currentSceneName + " (?)";
+        o.selected = true;
+        sceneSel.appendChild(o);
+      }
+      const def = HOTKEY_ACTIONS.find(a => a.id === hk.action);
+      if (!def?.payload) sceneSel.classList.add("hidden-payload");
+      sceneSel.addEventListener("change", () => {
+        hk.payload = hk.payload || {};
+        hk.payload.sceneName = sceneSel.value;
+      });
+      row.appendChild(sceneSel);
+
+      const keys = document.createElement("div");
+      keys.className = "hotkey-keys" + (hk.vkey ? "" : " empty");
+      keys.textContent = fmtHotkey(hk.mods || 0, hk.vkey || 0);
+      row.appendChild(keys);
+
+      const rec = document.createElement("button");
+      rec.type = "button";
+      rec.className = "hotkey-record";
+      rec.textContent = "AUFNEHMEN";
+      rec.addEventListener("click", () => startRecording(row, hk, keys, rec));
+      row.appendChild(rec);
+
+      const del = document.createElement("button");
+      del.type = "button";
+      del.className = "hotkey-del";
+      del.textContent = "×";
+      del.title = "Löschen";
+      del.addEventListener("click", () => {
+        hotkeys.splice(idx, 1);
+        renderHotkeysList();
+      });
+      row.appendChild(del);
+
+      hotkeysList.appendChild(row);
+    });
+  }
+
+  function startRecording(row, hk, keysEl, recBtn) {
+    if (recordingHotkeyRow) return; // one at a time
+    recordingHotkeyRow = row;
+    recBtn.classList.add("recording");
+    recBtn.textContent = "TASTE...";
+
+    const onKey = (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      const code = e.code;
+      const vkey = VK_BY_CODE[code];
+      // Ignore lone modifier presses
+      const isModOnly = ["ControlLeft", "ControlRight", "ShiftLeft", "ShiftRight",
+                         "AltLeft", "AltRight", "MetaLeft", "MetaRight"].includes(code);
+      if (isModOnly || !vkey) return;
+      let mods = 0;
+      if (e.ctrlKey)  mods |= MOD_CTRL;
+      if (e.shiftKey) mods |= MOD_SHIFT;
+      if (e.altKey)   mods |= MOD_ALT;
+      if (e.metaKey)  mods |= MOD_WIN;
+      hk.mods = mods;
+      hk.vkey = vkey;
+      keysEl.classList.remove("empty");
+      keysEl.textContent = fmtHotkey(mods, vkey);
+      stopRecording();
+    };
+
+    const stopRecording = () => {
+      window.removeEventListener("keydown", onKey, true);
+      recBtn.classList.remove("recording");
+      recBtn.textContent = "AUFNEHMEN";
+      recordingHotkeyRow = null;
+    };
+
+    window.addEventListener("keydown", onKey, true);
+  }
+
+  function addHotkey() {
+    hotkeys.push({ id: randomId(), action: "switchScene", payload: { sceneName: "" }, mods: 0, vkey: 0 });
+    renderHotkeysList();
+  }
+
+  function findHotkeyFor(predicate) {
+    for (const hk of hotkeys) {
+      if (!hk.vkey) continue;
+      if (predicate(hk)) return fmtHotkey(hk.mods || 0, hk.vkey);
+    }
+    return null;
+  }
+  function getHotkeyForAction(action) {
+    return findHotkeyFor(hk => hk.action === action);
+  }
+  function getHotkeyForSceneSwitch(sceneName) {
+    return findHotkeyFor(hk => hk.action === "switchScene" && hk.payload?.sceneName === sceneName);
+  }
+  function attachBadge(el, label) {
+    if (!el || !label) return;
+    const b = document.createElement("span");
+    b.className = "hotkey-badge";
+    b.textContent = label;
+    el.appendChild(b);
+  }
+  function refreshHotkeyBadges() {
+    document.querySelectorAll(".hotkey-badge").forEach(b => b.remove());
+    document.querySelectorAll(".scene-btn[data-scene]").forEach(btn => {
+      attachBadge(btn, getHotkeyForSceneSwitch(btn.dataset.scene));
+    });
+    document.querySelectorAll("#favorites .fav-slot").forEach((slot, idx) => {
+      if (slot.classList.contains("filled")) {
+        const sceneName = slot.dataset.scene;
+        const hk = getHotkeyForAction("favorite" + (idx + 1))
+                || getHotkeyForSceneSwitch(sceneName);
+        attachBadge(slot, hk);
+      }
+    });
+    if (micControl) attachBadge(micControl, getHotkeyForAction("toggleMyMicMute"));
+    if (recBtn) attachBadge(recBtn, getHotkeyForAction("toggleRecord"));
+    if (pauseBtn) attachBadge(pauseBtn, getHotkeyForAction("togglePause"));
+    if (streamBtn) attachBadge(streamBtn, getHotkeyForAction("toggleStream"));
+  }
+
+  function pushHotkeysToHost() {
+    if (!isHosted) return;
+    const list = hotkeys
+      .filter(h => h.vkey)
+      .map(h => ({
+        id: h.id,
+        modifiers: (h.mods | MOD_NOREPEAT) >>> 0,
+        vkey: h.vkey >>> 0
+      }));
+    window.chrome.webview.postMessage({ type: "registerHotkeys", hotkeys: list });
+  }
+
+  function clearHostHotkeys() {
+    if (!isHosted) return;
+    window.chrome.webview.postMessage({ type: "clearHotkeys" });
+  }
+
+  async function runHotkeyAction(hk) {
+    if (!hk || !currentConnId) return;
+    const p = hk.payload || {};
+    try {
+      switch (hk.action) {
+        case "switchScene":
+          if (p.sceneName) await switchScene(p.sceneName);
+          break;
+        case "toggleRecord":
+          await obs.call("ToggleRecord");
+          break;
+        case "togglePause":
+          if (!recording) break;
+          if (paused) await obs.call("ResumeRecord");
+          else        await obs.call("PauseRecord");
+          break;
+        case "toggleStream":
+          await obs.call("ToggleStream");
+          break;
+        case "toggleMyMicMute":
+          if (myMicInputName) await obs.call("ToggleInputMute", { inputName: myMicInputName });
+          break;
+        case "myMicLouder":
+          if (myMicInputName) await adjustVolume(myMicInputName, 3);
+          break;
+        case "myMicQuieter":
+          if (myMicInputName) await adjustVolume(myMicInputName, -3);
+          break;
+        case "favorite1": case "favorite2": case "favorite3": case "favorite4": {
+          const idx = parseInt(hk.action.replace("favorite", ""), 10) - 1;
+          const name = favorites[idx];
+          if (name) await switchScene(name);
+          break;
+        }
+      }
+    } catch (e) { console.error("hotkey action failed:", e); }
+  }
+
+  window.__onHotkey = (id) => {
+    const hk = hotkeys.find(h => h.id === id);
+    if (hk) runHotkeyAction(hk);
+  };
+
+  function setMyMic(inputName) {
+    myMicInputName = (myMicInputName === inputName) ? "" : inputName;
+    saveConnSettings();
+    document.querySelectorAll(".mic-pick").forEach(btn => {
+      btn.classList.toggle("selected", btn.dataset.input === myMicInputName);
+    });
+    refreshMicControl();
+  }
+
+  async function refreshMicControl() {
+    if (!myMicInputName) {
+      micControl.hidden = true;
+      return;
+    }
+    micControl.hidden = false;
+    micLabel.textContent = myMicInputName;
+    try {
+      const r = await obs.call("GetInputMute", { inputName: myMicInputName });
+      myMicMuted = !!r.inputMuted;
+    } catch {
+      myMicMuted = false;
+      micLabel.textContent = myMicInputName + " (?)";
+    }
+    applyMicMuteUI();
+  }
+
+  function applyMicMuteUI() {
+    micControl.classList.toggle("muted", myMicMuted);
+    micIcon.textContent = myMicMuted ? "🔇" : "🎤";
+    micState.textContent = myMicMuted ? "STUMM" : "LIVE";
+  }
+
+  async function toggleMyMicMute() {
+    if (!myMicInputName) return;
+    try { await obs.call("ToggleInputMute", { inputName: myMicInputName }); }
+    catch (e) { console.error(e); }
+  }
+
+  micControl.addEventListener("click", toggleMyMicMute);
+
+  // ─── LIVE SCENE PREVIEW ─────────────────────────────
+  async function fetchPreview() {
+    if (!previewEnabled || !currentScene || previewInFlight) return;
+    previewInFlight = true;
+    try {
+      const r = await obs.call("GetSourceScreenshot", {
+        sourceName: currentScene,
+        imageFormat: "jpg",
+        imageWidth: PREVIEW_W,
+        imageHeight: PREVIEW_H,
+        imageCompressionQuality: PREVIEW_QUALITY
+      });
+      const data = r.imageData || "";
+      previewThumb.src = data.startsWith("data:") ? data : ("data:image/jpg;base64," + data);
+      previewThumb.hidden = false;
+    } catch (e) {
+      // OBS source may not support screenshot (rare) — fail silently
+    } finally {
+      previewInFlight = false;
+    }
+  }
+
+  function startPreviewLoop() {
+    stopPreviewLoop();
+    if (!previewEnabled) return;
+    fetchPreview();
+    previewInterval = setInterval(fetchPreview, Math.round(1000 / PREVIEW_FPS));
+  }
+
+  function stopPreviewLoop() {
+    if (previewInterval) {
+      clearInterval(previewInterval);
+      previewInterval = null;
+    }
+  }
+
+  function applyPreviewState() {
+    previewArea.classList.toggle("collapsed", !previewEnabled);
+    if (previewEnabled && currentConnId) {
+      startPreviewLoop();
+    } else {
+      stopPreviewLoop();
+      previewThumb.removeAttribute("src");
+    }
+  }
+
+  previewToggle.addEventListener("click", () => {
+    previewEnabled = !previewEnabled;
+    saveConnSettings();
+    applyPreviewState();
+  });
+
+  // Click thumb to enlarge (modal-style), click again or ESC to close
+  const previewContent = previewThumb.parentElement;
+  previewContent.addEventListener("click", () => {
+    previewContent.classList.toggle("expanded");
+  });
+  window.addEventListener("keydown", (e) => {
+    if (e.key === "Escape" && previewContent.classList.contains("expanded")) {
+      previewContent.classList.remove("expanded");
+    }
+  });
+
+  function toggleFavorite(sceneName) {
+    const idx = favorites.indexOf(sceneName);
+    if (idx >= 0) {
+      favorites.splice(idx, 1);
+    } else {
+      if (favorites.length >= 4) favorites.shift();
+      favorites.push(sceneName);
+    }
+    saveConnSettings();
+    renderFavorites();
+    document.querySelectorAll(".scene-btn").forEach(btn => {
+      const name = btn.dataset.scene;
+      const star = btn.querySelector(".scene-star");
+      if (!star) return;
+      const isFav = favorites.includes(name);
+      star.classList.toggle("on", isFav);
+      star.textContent = isFav ? "★" : "☆";
+    });
+  }
+
+  function renderFavorites() {
+    favoritesEl.innerHTML = "";
+    for (let i = 0; i < 4; i++) {
+      const name = favorites[i];
+      if (name) {
+        const btn = document.createElement("button");
+        btn.className = "fav-slot filled";
+        btn.dataset.scene = name;
+        if (name === currentScene) btn.classList.add("active");
+        btn.textContent = name;
+        btn.addEventListener("click", () => switchScene(name));
+        favoritesEl.appendChild(btn);
+      } else {
+        const slot = document.createElement("div");
+        slot.className = "fav-slot";
+        slot.textContent = "LEER";
+        favoritesEl.appendChild(slot);
+      }
+    }
+  }
+
+  function renderScenes(scenes) {
+    scenesGrid.innerHTML = "";
+    const ordered = [...scenes].reverse(); // OBS returns newest-index first
+    ordered.forEach(s => {
+      const btn = document.createElement("button");
+      btn.className = "scene-btn";
+      btn.dataset.scene = s.sceneName;
+      if (s.sceneName === currentScene) btn.classList.add("active");
+
+      const label = document.createElement("span");
+      label.textContent = s.sceneName;
+      btn.appendChild(label);
+
+      const star = document.createElement("button");
+      star.className = "scene-star";
+      const isFav = favorites.includes(s.sceneName);
+      star.classList.toggle("on", isFav);
+      star.textContent = isFav ? "★" : "☆";
+      star.title = "Als Favorit markieren";
+      star.addEventListener("click", e => {
+        e.stopPropagation();
+        toggleFavorite(s.sceneName);
+      });
+      btn.appendChild(star);
+
+      btn.addEventListener("click", () => switchScene(s.sceneName));
+      scenesGrid.appendChild(btn);
+    });
+  }
+
+  async function switchScene(name) {
+    try {
+      await obs.call("SetCurrentProgramScene", { sceneName: name });
+    } catch (err) {
+      console.error(err);
+    }
+  }
+
+  function updateRecUI() {
+    recPill.classList.toggle("on", recording && !paused);
+    recBtn.classList.toggle("on", recording);
+    recBtn.classList.toggle("recpaused", recording && paused);
+    recBtn.textContent = recording ? "■ STOPP AUFNAHME" : "● AUFNAHME";
+    recClock.classList.toggle("inactive", !recording);
+    if (!recording) {
+      recClock.textContent = "REC  00:00:00";
+      recordStart = null;
+      totalPauseMs = 0;
+      pauseStart = null;
+      paused = false;
+    }
+  }
+
+  function updatePauseUI() {
+    pauseBtn.classList.toggle("enabled", recording && !paused);
+    pauseBtn.classList.toggle("paused", recording && paused);
+    pauseBtn.textContent = paused ? "▶ FORTSETZEN" : "❚❚ PAUSE";
+  }
+
+  function updateStreamUI() {
+    streamPill.classList.toggle("live", streaming);
+    streamBtn.classList.toggle("on", streaming);
+    streamBtn.textContent = streaming ? "■ STOPP STREAM" : "▶ LIVE";
+    streamClock.classList.toggle("inactive", !streaming);
+    if (!streaming) {
+      streamClock.textContent = "LIVE  00:00:00";
+      streamStart = null;
+    }
+  }
+
+  function formatDuration(ms) {
+    const sec = Math.floor(ms / 1000);
+    const h = String(Math.floor(sec / 3600)).padStart(2, "0");
+    const m = String(Math.floor((sec % 3600) / 60)).padStart(2, "0");
+    const s = String(sec % 60).padStart(2, "0");
+    return `${h}:${m}:${s}`;
+  }
+
+  recBtn.addEventListener("click", async () => {
+    try { await obs.call("ToggleRecord"); } catch (e) { console.error(e); }
+  });
+  pauseBtn.addEventListener("click", async () => {
+    if (!recording) return;
+    try {
+      if (paused) {
+        await obs.call("ResumeRecord");
+      } else {
+        await obs.call("PauseRecord");
+      }
+    } catch (e) { console.error(e); }
+  });
+  streamBtn.addEventListener("click", async () => {
+    try { await obs.call("ToggleStream"); } catch (e) { console.error(e); }
+  });
+
+  obs.on("CurrentProgramSceneChanged", ({ sceneName }) => {
+    currentScene = sceneName;
+    nowScene.textContent = sceneName;
+    document.querySelectorAll(".scene-btn").forEach(b => {
+      b.classList.toggle("active", b.dataset.scene === sceneName);
+    });
+    document.querySelectorAll(".fav-slot.filled").forEach(b => {
+      b.classList.toggle("active", b.dataset.scene === sceneName);
+    });
+  });
+  obs.on("SceneListChanged", () => refreshAll());
+  obs.on("SceneCreated", () => refreshAll());
+  obs.on("SceneRemoved", ({ sceneName }) => {
+    const idx = favorites.indexOf(sceneName);
+    if (idx >= 0) { favorites.splice(idx, 1); saveConnSettings(); }
+    refreshAll();
+  });
+  obs.on("SceneNameChanged", ({ oldSceneName, sceneName }) => {
+    const idx = favorites.indexOf(oldSceneName);
+    if (idx >= 0) { favorites[idx] = sceneName; saveConnSettings(); }
+    refreshAll();
+  });
+
+  obs.on("RecordStateChanged", ({ outputActive, outputState }) => {
+    const wasRecording = recording;
+    recording = outputActive;
+    if (outputState === "OBS_WEBSOCKET_OUTPUT_PAUSED") {
+      paused = true;
+      pauseStart = Date.now();
+    } else if (outputState === "OBS_WEBSOCKET_OUTPUT_RESUMED") {
+      if (pauseStart) totalPauseMs += Date.now() - pauseStart;
+      pauseStart = null;
+      paused = false;
+    } else if (recording && !wasRecording) {
+      recordStart = Date.now();
+      totalPauseMs = 0;
+      pauseStart = null;
+      paused = false;
+    }
+    updateRecUI();
+    updatePauseUI();
+  });
+  obs.on("StreamStateChanged", ({ outputActive }) => {
+    streaming = outputActive;
+    if (streaming) streamStart = Date.now();
+    updateStreamUI();
+  });
+
+  obs.on("ConnectionClosed", () => {
+    if (currentConnId) {
+      overlay.classList.remove("hidden");
+      showListView();
+      showListError("VERBINDUNG VERLOREN");
+    }
+    currentConnId = null;
+    currentConnTag.textContent = "—";
+    audioMeters.innerHTML = "";
+    meterCards.clear();
+    micControl.hidden = true;
+    stopPreviewLoop();
+    previewThumb.removeAttribute("src");
+    previewArea.classList.add("collapsed");
+    clearHostHotkeys();
+    hotkeys = [];
+    availableScenes = [];
+    openHotkeysBtn.hidden = true;
+  });
+
+  // ─── AUDIO PEAK METERS ──────────────────────────────
+  const meterCards = new Map(); // inputName -> { card, bars, peaks }
+
+  function linToBarPercent(lin) {
+    if (lin <= 0) return 0;
+    const db = 20 * Math.log10(lin);
+    const minDb = -60, maxDb = 0;
+    const pct = ((db - minDb) / (maxDb - minDb)) * 100;
+    return Math.max(0, Math.min(100, pct));
+  }
+
+  obs.on("InputVolumeMeters", ({ inputs }) => {
+    const seen = new Set();
+    const now = Date.now();
+    for (const input of inputs) {
+      const levels = input.inputLevelsMul || [];
+      if (levels.length === 0) continue;
+      seen.add(input.inputName);
+      let entry = meterCards.get(input.inputName);
+      if (!entry || entry.bars.length !== levels.length) {
+        if (entry) entry.card.remove();
+        const card = document.createElement("div");
+        card.className = "meter-card";
+
+        const header = document.createElement("div");
+        header.className = "meter-header";
+        const micPick = document.createElement("button");
+        micPick.className = "mic-pick";
+        micPick.type = "button";
+        micPick.textContent = "🎤";
+        micPick.title = "Als 'Mein Mikro' setzen";
+        micPick.dataset.input = input.inputName;
+        if (input.inputName === myMicInputName) micPick.classList.add("selected");
+        micPick.addEventListener("click", () => setMyMic(input.inputName));
+        const nameEl = document.createElement("div");
+        nameEl.className = "meter-name";
+        nameEl.textContent = input.inputName;
+        const dbLabel = document.createElement("div");
+        dbLabel.className = "meter-db";
+        dbLabel.textContent = "…";
+        header.appendChild(micPick);
+        header.appendChild(nameEl);
+        header.appendChild(dbLabel);
+        card.appendChild(header);
+
+        const bars = [];
+        for (let i = 0; i < levels.length; i++) {
+          const bar = document.createElement("div");
+          bar.className = "meter-bar";
+          const fill = document.createElement("div");
+          fill.className = "meter-fill";
+          const peak = document.createElement("div");
+          peak.className = "meter-peak";
+          bar.appendChild(fill); bar.appendChild(peak);
+          card.appendChild(bar);
+          bars.push({ bar, fill, peak });
+        }
+
+        const fader = document.createElement("div");
+        fader.className = "meter-fader";
+        const faderFill = document.createElement("div");
+        faderFill.className = "meter-fader-fill";
+        const faderTick = document.createElement("div");
+        faderTick.className = "meter-fader-tick0";
+        faderTick.title = "0 dB";
+        const faderThumb = document.createElement("div");
+        faderThumb.className = "meter-fader-thumb";
+        fader.appendChild(faderFill);
+        fader.appendChild(faderTick);
+        fader.appendChild(faderThumb);
+        attachFaderDrag(fader, input.inputName);
+        card.appendChild(fader);
+
+        const controls = document.createElement("div");
+        controls.className = "meter-controls";
+        const muteBtn = document.createElement("button");
+        muteBtn.className = "meter-btn mute";
+        muteBtn.textContent = "🔊";
+        muteBtn.addEventListener("click", () => toggleMute(input.inputName));
+        const downBtn = document.createElement("button");
+        downBtn.className = "meter-btn";
+        downBtn.textContent = "−";
+        downBtn.addEventListener("click", () => adjustVolume(input.inputName, -3));
+        const upBtn = document.createElement("button");
+        upBtn.className = "meter-btn";
+        upBtn.textContent = "+";
+        upBtn.addEventListener("click", () => adjustVolume(input.inputName, 3));
+        controls.appendChild(muteBtn);
+        controls.appendChild(downBtn);
+        controls.appendChild(upBtn);
+        card.appendChild(controls);
+
+        audioMeters.appendChild(card);
+        entry = {
+          card, bars,
+          peaks: bars.map(() => ({ value: 0, time: 0 })),
+          dbLabel, muteBtn,
+          fader, faderFill, faderThumb,
+          muted: false, volumeDb: null
+        };
+        meterCards.set(input.inputName, entry);
+        fetchMeterState(input.inputName, entry);
+      }
+      for (let ch = 0; ch < levels.length; ch++) {
+        const chData = levels[ch] || [];
+        const peakLin = chData[1] || 0;
+        const pct = linToBarPercent(peakLin);
+        entry.bars[ch].fill.style.width = pct + "%";
+        const pState = entry.peaks[ch];
+        if (pct >= pState.value || (now - pState.time) > 1500) {
+          pState.value = pct; pState.time = now;
+        }
+        entry.bars[ch].peak.style.left = pState.value + "%";
+      }
+    }
+    // Remove cards for inputs that disappeared
+    for (const [name, entry] of meterCards) {
+      if (!seen.has(name)) {
+        entry.card.remove();
+        meterCards.delete(name);
+      }
+    }
+  });
+
+  async function fetchMeterState(inputName, entry) {
+    try {
+      const [muteData, volData] = await Promise.all([
+        obs.call("GetInputMute", { inputName }),
+        obs.call("GetInputVolume", { inputName })
+      ]);
+      entry.muted = !!muteData.inputMuted;
+      entry.volumeDb = volData.inputVolumeDb;
+      updateMeterCardUI(entry);
+    } catch {
+      // Input doesn't support audio actions — hide controls
+      const ctrl = entry.card.querySelector(".meter-controls");
+      if (ctrl) ctrl.style.display = "none";
+      const db = entry.card.querySelector(".meter-db");
+      if (db) db.style.display = "none";
+    }
+  }
+
+  function updateMeterCardUI(entry) {
+    entry.card.classList.toggle("muted", !!entry.muted);
+    entry.muteBtn.classList.toggle("on", !!entry.muted);
+    entry.muteBtn.textContent = entry.muted ? "🔇" : "🔊";
+    if (entry.dbLabel) {
+      const db = entry.volumeDb;
+      if (db === null || db === undefined || !isFinite(db) || db <= -95) {
+        entry.dbLabel.textContent = "−∞ dB";
+      } else {
+        entry.dbLabel.textContent = (db > 0 ? "+" : "") + db.toFixed(1) + " dB";
+      }
+    }
+    if (entry.faderFill && entry.faderThumb) {
+      const pct = dbToFaderPercent(entry.volumeDb);
+      entry.faderFill.style.width = pct + "%";
+      entry.faderThumb.style.left = pct + "%";
+    }
+  }
+
+  // OBS-style cubic fader mapping: -∞..0 dB → 0..100%
+  function dbToFaderPercent(db) {
+    if (db === null || db === undefined || !isFinite(db) || db <= -95) return 0;
+    if (db >= 0) return 100;
+    const mul = Math.pow(10, db / 20);
+    return Math.max(0, Math.min(100, Math.pow(mul, 1/3) * 100));
+  }
+  function faderPercentToDb(pct) {
+    pct = Math.max(0, Math.min(100, pct));
+    if (pct <= 0.5) return -100;
+    if (pct >= 100) return 0;
+    const mul = Math.pow(pct / 100, 3);
+    return 20 * Math.log10(mul);
+  }
+
+  function attachFaderDrag(fader, inputName) {
+    let dragging = false;
+    let pending = false;
+    let lastDb = null;
+
+    async function send() {
+      if (!pending) return;
+      pending = false;
+      const db = lastDb;
+      try {
+        await obs.call("SetInputVolume", { inputName, inputVolumeDb: db });
+      } catch (e) { console.error(e); }
+      if (dragging) requestAnimationFrame(send);
+    }
+
+    function setFromEvent(e) {
+      const rect = fader.getBoundingClientRect();
+      const pct = ((e.clientX - rect.left) / rect.width) * 100;
+      const db = faderPercentToDb(pct);
+      lastDb = db;
+      pending = true;
+      const entry = meterCards.get(inputName);
+      if (entry) {
+        entry.volumeDb = db;
+        updateMeterCardUI(entry);
+      }
+    }
+
+    fader.addEventListener("pointerdown", e => {
+      dragging = true;
+      fader.setPointerCapture(e.pointerId);
+      fader.classList.add("dragging");
+      setFromEvent(e);
+      send();
+    });
+    fader.addEventListener("pointermove", e => {
+      if (!dragging) return;
+      setFromEvent(e);
+      if (!pending) return;
+      requestAnimationFrame(send);
+    });
+    const stopDrag = e => {
+      if (!dragging) return;
+      dragging = false;
+      fader.classList.remove("dragging");
+      send();
+    };
+    fader.addEventListener("pointerup", stopDrag);
+    fader.addEventListener("pointercancel", stopDrag);
+  }
+
+  async function adjustVolume(inputName, deltaDb) {
+    const entry = meterCards.get(inputName);
+    if (!entry) return;
+    const currentDb = (entry.volumeDb !== null && isFinite(entry.volumeDb)) ? entry.volumeDb : -60;
+    const newDb = Math.max(-100, Math.min(26, currentDb + deltaDb));
+    try {
+      await obs.call("SetInputVolume", { inputName, inputVolumeDb: newDb });
+      entry.volumeDb = newDb;
+      updateMeterCardUI(entry);
+    } catch (e) { console.error(e); }
+  }
+
+  async function toggleMute(inputName) {
+    try { await obs.call("ToggleInputMute", { inputName }); }
+    catch (e) { console.error(e); }
+  }
+
+  obs.on("InputMuteStateChanged", ({ inputName, inputMuted }) => {
+    const entry = meterCards.get(inputName);
+    if (entry) { entry.muted = inputMuted; updateMeterCardUI(entry); }
+    if (inputName === myMicInputName) {
+      myMicMuted = !!inputMuted;
+      applyMicMuteUI();
+    }
+  });
+  obs.on("InputVolumeChanged", ({ inputName, inputVolumeDb }) => {
+    const entry = meterCards.get(inputName);
+    if (entry) { entry.volumeDb = inputVolumeDb; updateMeterCardUI(entry); }
+  });
+
+  // Peak decay tick (in case event stops firing for an input)
+  setInterval(() => {
+    const now = Date.now();
+    for (const entry of meterCards.values()) {
+      for (let i = 0; i < entry.peaks.length; i++) {
+        const p = entry.peaks[i];
+        if (now - p.time > 1500 && p.value > 0) {
+          p.value = Math.max(0, p.value - 5);
+          entry.bars[i].peak.style.left = p.value + "%";
+        }
+      }
+    }
+  }, 100);
+
+  // CLOCKS
+  setInterval(() => {
+    if (recording && recordStart) {
+      const pauseAdjust = totalPauseMs + (paused && pauseStart ? Date.now() - pauseStart : 0);
+      const elapsed = Date.now() - recordStart - pauseAdjust;
+      const label = paused ? "PAUSE" : "REC";
+      recClock.textContent = label + "  " + formatDuration(elapsed);
+    }
+    if (streaming && streamStart) {
+      streamClock.textContent = "LIVE  " + formatDuration(Date.now() - streamStart);
+    }
+  }, 500);
+
+  // ─── INIT ───────────────────────────────────────────
+  loadConnections();
+  showListView();
+
+  document.getElementById("addNewBtn").addEventListener("click", () => showEditView(null));
+  document.getElementById("cancelEditBtn").addEventListener("click", () => showListView());
+  document.getElementById("saveAndConnectBtn").addEventListener("click", saveAndConnect);
+  document.getElementById("exportBtn").addEventListener("click", exportJson);
+  document.getElementById("importBtn").addEventListener("click", () =>
+    document.getElementById("importFile").click());
+  document.getElementById("importFile").addEventListener("change", e => {
+    if (e.target.files[0]) importJson(e.target.files[0]);
+    e.target.value = "";
+  });
+
+  document.getElementById("connList").addEventListener("click", e => {
+    const pickEl = e.target.closest("[data-pick]");
+    const editEl = e.target.closest("[data-edit]");
+    const delEl = e.target.closest("[data-delete]");
+    if (delEl) deleteConn(delEl.dataset.delete);
+    else if (editEl) showEditView(editEl.dataset.edit);
+    else if (pickEl) {
+      const conn = connections.find(c => c.id === pickEl.dataset.pick);
+      if (conn) connectToConn(conn);
+    }
+  });
+
+  document.getElementById("switchConnBtn").addEventListener("click", async () => {
+    try { await obs.disconnect(); } catch {}
+    currentConnId = null;
+    currentConnTag.textContent = "—";
+    overlay.classList.remove("hidden");
+    showListView();
+  });
+
+  scenesToggle.addEventListener("click", () => {
+    scenesCollapsed = !scenesCollapsed;
+    scenesArea.classList.toggle("collapsed", scenesCollapsed);
+    saveConnSettings();
+  });
+
+  document.getElementById("openHotkeysBtn").addEventListener("click", openHotkeysOverlay);
+  document.getElementById("hotkeysDoneBtn").addEventListener("click", closeHotkeysOverlay);
+  document.getElementById("addHotkeyBtn").addEventListener("click", addHotkey);
+
+  metersToggle.addEventListener("click", async () => {
+    metersCollapsed = !metersCollapsed;
+    metersArea.classList.toggle("collapsed", metersCollapsed);
+    saveConnSettings();
+    if (metersCollapsed) {
+      // Clear cards so stale data is gone next time
+      audioMeters.innerHTML = "";
+      meterCards.clear();
+    }
+    if (currentConnId) {
+      const subs = SUBS_BASE | (metersCollapsed ? 0 : SUBS_METERS);
+      try { await obs.reidentify({ eventSubscriptions: subs }); }
+      catch (e) { console.error("reidentify failed:", e); }
+    }
+  });
+
+  // Enter in edit view submits
+  ["connName", "host", "port", "password"].forEach(id => {
+    document.getElementById(id).addEventListener("keydown", e => {
+      if (e.key === "Enter") saveAndConnect();
+    });
+  });
+
+  // ─── YOUTUBE THUMB ROW ──────────────────────────────
+  const ytRow = document.getElementById("ytRow");
+  function renderVideos(videos) {
+    ytRow.innerHTML = "";
+    if (!videos || videos.length === 0) return;
+    videos.forEach(v => {
+      const a = document.createElement("a");
+      a.href = `https://www.youtube.com/watch?v=${v.id}`;
+      a.target = "_blank";
+      a.rel = "noopener noreferrer";
+      a.className = "yt-thumb";
+      a.title = v.title;
+      const img = document.createElement("img");
+      img.src = v.thumbnailUrl;
+      img.alt = v.title;
+      img.loading = "lazy";
+      a.appendChild(img);
+      const titleEl = document.createElement("div");
+      titleEl.className = "yt-title";
+      titleEl.textContent = v.title;
+      a.appendChild(titleEl);
+      ytRow.appendChild(a);
+    });
+  }
+
+  // ─── STATS DISPLAY ──────────────────────────────────
+  function formatBytesPerSec(b) {
+    if (b < 1024) return Math.round(b) + " B/s";
+    if (b < 1024 * 1024) return (b / 1024).toFixed(1) + " KB/s";
+    return (b / 1024 / 1024).toFixed(2) + " MB/s";
+  }
+
+  let lastBytesIn = 0, lastBytesOut = 0, lastBytesTime = Date.now();
+  setInterval(() => {
+    const now = Date.now();
+    const elapsed = (now - lastBytesTime) / 1000;
+    if (elapsed <= 0) return;
+    const bIn = window.__netBytesIn || 0;
+    const bOut = window.__netBytesOut || 0;
+    const inRate = (bIn - lastBytesIn) / elapsed;
+    const outRate = (bOut - lastBytesOut) / elapsed;
+    lastBytesIn = bIn; lastBytesOut = bOut; lastBytesTime = now;
+    setStat("net", "↓" + formatBytesPerSec(inRate) + " ↑" + formatBytesPerSec(outRate));
+  }, 2000);
+
+  if (isHosted) {
+    window.chrome.webview.addEventListener("message", (e) => {
+      try {
+        const msg = typeof e.data === "string" ? JSON.parse(e.data) : e.data;
+        if (msg.type === "stats") {
+          setStat("mem", Math.round(msg.memMB) + " MB");
+          setStat("cpu", msg.cpuPercent.toFixed(1) + " %");
+        }
+        else if (msg.type === "videos") renderVideos(msg.videos);
+      } catch (err) { console.error("host message", err); }
+    });
+    // Request latest videos right away (now that C# has consent cookies)
+    window.chrome.webview.postMessage({ type: "fetchVideos", handle: "@lieblingstypen" });
+  } else {
+    setStat("mem", "n/a");
+    setStat("cpu", "n/a");
+  }
+
+  function openHotkeysOverlay() {
+    if (!currentConnId) return;
+    renderHotkeysList();
+    hotkeysOverlay.classList.remove("hidden");
+  }
+  function closeHotkeysOverlay() {
+    hotkeysOverlay.classList.add("hidden");
+    saveConnSettings();
+    pushHotkeysToHost();
+    refreshHotkeyBadges();
+  }
+</script>
+
+<div class="overlay hidden" id="hotkeysOverlay">
+  <div class="connect-card">
+    <h2>HOTKEYS</h2>
+    <div class="hotkeys-list" id="hotkeysList"></div>
+    <button class="btn-small btn-block" id="addHotkeyBtn" type="button" style="margin-top:1vh">+ HOTKEY HINZUFÜGEN</button>
+    <div class="hotkeys-info" id="hotkeysInfo">Globale Hotkeys funktionieren nur in der .exe — nicht im Browser.</div>
+    <div class="edit-actions" style="margin-top:1.5vh">
+      <button class="btn" id="hotkeysDoneBtn" type="button">FERTIG</button>
+    </div>
+  </div>
+</div>
+
+</body>
+</html>
