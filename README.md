@@ -17,13 +17,13 @@ Eine native Windows-Anwendung zur **Fernsteuerung von OBS Studio** — auch übe
 - **Globale Hotkeys** — funktionieren auch wenn ein anderes Programm (z. B. Vollbild-Spiel) den Fokus hat. Pro Verbindung konfigurierbar
 - **Performance-Stats** — RAM, CPU, Netzwerk-Bandbreite der App selbst sichtbar
 - **JSON-Export / Import** — alle Verbindungen, Favoriten, Hotkeys etc. in einer Datei sichern und auf einen anderen PC mitnehmen
-- **Neueste YouTube-Videos** vom Channel als klickbare Thumbnail-Reihe
+- **Lieblingstypen-Logo** klickbar → öffnet den YouTube-Kanal im Standard-Browser
 
 ## Installation
 
 ### Variante A: Fertige .exe (empfohlen)
 
-1. Auf der [Releases-Seite](#releases) die aktuelle `LieblingstypenRemote.exe` herunterladen
+1. Auf der [Releases-Seite](#releases) die aktuelle `LieblingstypenRemoteOBS.exe` herunterladen
 2. Doppelklick → läuft
 
 Die .exe ist self-contained, braucht **kein .NET Install** und **kein WebView2-Install** (WebView2 ist auf Windows 11 bereits da; auf älteren Windows lädt der WebView2-Installer beim ersten Start nach).
@@ -80,7 +80,7 @@ In OBS Studio:
 
 ```
 ┌─────────────────────────────────────┐
-│  LieblingstypenRemote.exe (C# WPF)  │
+│  LieblingstypenRemoteOBS.exe (C# WPF)  │
 │                                     │
 │  ┌──────────────────────────────┐   │
 │  │  WebView2 (Chromium)         │   │

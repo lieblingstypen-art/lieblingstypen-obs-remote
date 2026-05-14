@@ -107,6 +107,44 @@
     letter-spacing: 2px;
     color: var(--yellow);
     text-shadow: 3px 3px 0 var(--black), -1px -1px 0 var(--black), 1px -1px 0 var(--black), -1px 1px 0 var(--black);
+    cursor: pointer;
+    user-select: none;
+    transition: color 0.15s;
+  }
+  .title:hover { color: var(--yellow-hot); }
+
+  /* ABOUT MODAL */
+  .about-card {
+    max-width: 60vw;
+    line-height: 1.5;
+  }
+  .about-card p {
+    color: var(--white);
+    font-size: 2vh;
+    letter-spacing: 1px;
+    margin-bottom: 1.5vh;
+  }
+  .about-card .yt-link {
+    display: inline-flex; align-items: center; gap: 0.6vw;
+    background: var(--red);
+    color: var(--white);
+    border: 4px solid var(--black);
+    padding: 1.5vh 2vw;
+    font-family: inherit;
+    font-size: 2.4vh; font-weight: 900;
+    letter-spacing: 2px;
+    cursor: pointer;
+    box-shadow: 6px 6px 0 var(--black);
+    text-decoration: none;
+    margin-top: 1vh;
+  }
+  .about-card .yt-link:hover { background: #ff3333; }
+  .about-card .yt-icon {
+    background: var(--white);
+    color: var(--red);
+    padding: 0.2vh 0.6vw;
+    font-weight: 900;
+    border-radius: 4px;
   }
   .subtitle {
     font-size: 1.6vh; letter-spacing: 4px;
@@ -595,10 +633,13 @@
   .action-btn.rec.on { background: var(--red); color: var(--white); animation: pulse 1s infinite; }
   .action-btn.stream.on { background: var(--green); color: var(--white); }
 
-  .rec-buttons {
+  .rec-buttons, .stream-buttons {
     display: flex; gap: 1vw;
+    min-height: 11vh;
   }
-  .rec-buttons .action-btn.rec { flex: 1; min-width: 0; }
+  .rec-buttons .action-btn.rec,
+  .stream-buttons .action-btn.stream { flex: 1; min-width: 0; }
+  .action-btn-spacer { flex: 0 0 22%; }
   .action-btn.pause {
     flex: 0 0 22%;
     font-size: 3.2vh;
@@ -740,8 +781,14 @@
     background: rgba(0,0,0,0.4);
     border: 2px solid rgba(255,184,0,0.3);
     padding: 0.3vh 0.5vw;
-    min-width: 7vw;
+    width: 13vw;
+    flex-shrink: 0;
+    flex-grow: 0;
     cursor: help;
+    overflow: hidden;
+  }
+  .stats-box > .stats-line {
+    overflow: hidden; text-overflow: ellipsis;
   }
   .stats-box > .stats-line {
     display: flex; justify-content: space-between; gap: 0.4vw;
@@ -928,53 +975,6 @@
   .meter-bar.muted .meter-fill { background: #444; }
   .meter-bar.muted .meter-peak { background: #666; box-shadow: none; }
 
-  /* YOUTUBE THUMBS ROW */
-  .yt-row {
-    display: flex; gap: 0.4vw;
-    overflow-x: auto;
-    padding: 0.5vh 0.3vw;
-    flex-shrink: 0;
-    background: rgba(0,0,0,0.35);
-    border-top: 2px solid rgba(255,184,0,0.3);
-    margin-top: 1.5vh;
-  }
-  .yt-row:empty { display: none; }
-  .yt-thumb {
-    position: relative;
-    flex: 0 0 auto;
-    width: 11vw;
-    aspect-ratio: 16 / 9;
-    background: #0a0a0a;
-    border: 2px solid var(--orange);
-    text-decoration: none;
-    overflow: hidden;
-    transition: transform 0.1s, border-color 0.15s;
-  }
-  .yt-thumb:hover {
-    border-color: var(--yellow);
-    z-index: 10;
-  }
-  .yt-thumb img {
-    width: 100%; height: 100%;
-    object-fit: cover; display: block;
-  }
-  .yt-title {
-    position: absolute; bottom: 0; left: 0; right: 0;
-    background: rgba(0,0,0,0.92);
-    color: var(--white);
-    font-size: 1.4vh;
-    line-height: 1.3;
-    letter-spacing: 0.5px;
-    padding: 0.6vh 0.5vw;
-    max-height: 100%;
-    overflow: hidden;
-    opacity: 0;
-    transition: opacity 0.15s;
-    border-top: 2px solid var(--yellow);
-  }
-  .yt-thumb:hover .yt-title {
-    opacity: 1;
-  }
 
   /* SCROLLBAR */
   .scenes-grid::-webkit-scrollbar { width: 14px; }
@@ -1030,7 +1030,7 @@
   <header>
     <a class="logo" href="https://www.youtube.com/@lieblingstypen/playlists" target="_blank" rel="noopener noreferrer" title="Zum Lieblingstypen YouTube-Kanal"></a>
     <div>
-      <div class="title">LIEBLINGSTYPEN</div>
+      <div class="title" id="aboutTitle" title="Über Lieblingstypen">LIEBLINGSTYPEN</div>
       <div class="subtitle">OBS REMOTE CONTROL</div>
     </div>
     <div class="status-strip">
@@ -1103,11 +1103,13 @@
     </div>
     <div class="control-group">
       <div class="clock inactive" id="streamClock">LIVE  00:00:00</div>
-      <button class="action-btn stream" id="streamBtn">▶ LIVE</button>
+      <div class="stream-buttons">
+        <button class="action-btn stream" id="streamBtn">▶ LIVE</button>
+        <div class="action-btn-spacer"></div>
+      </div>
     </div>
   </footer>
 
-  <div class="yt-row" id="ytRow"></div>
 </div>
 
 <script type="module">
@@ -2424,31 +2426,6 @@
     });
   });
 
-  // ─── YOUTUBE THUMB ROW ──────────────────────────────
-  const ytRow = document.getElementById("ytRow");
-  function renderVideos(videos) {
-    ytRow.innerHTML = "";
-    if (!videos || videos.length === 0) return;
-    videos.forEach(v => {
-      const a = document.createElement("a");
-      a.href = `https://www.youtube.com/watch?v=${v.id}`;
-      a.target = "_blank";
-      a.rel = "noopener noreferrer";
-      a.className = "yt-thumb";
-      a.title = v.title;
-      const img = document.createElement("img");
-      img.src = v.thumbnailUrl;
-      img.alt = v.title;
-      img.loading = "lazy";
-      a.appendChild(img);
-      const titleEl = document.createElement("div");
-      titleEl.className = "yt-title";
-      titleEl.textContent = v.title;
-      a.appendChild(titleEl);
-      ytRow.appendChild(a);
-    });
-  }
-
   // ─── STATS DISPLAY ──────────────────────────────────
   function formatBytesPerSec(b) {
     if (b < 1024) return Math.round(b) + " B/s";
@@ -2477,15 +2454,24 @@
           setStat("mem", Math.round(msg.memMB) + " MB");
           setStat("cpu", msg.cpuPercent.toFixed(1) + " %");
         }
-        else if (msg.type === "videos") renderVideos(msg.videos);
       } catch (err) { console.error("host message", err); }
     });
-    // Request latest videos right away (now that C# has consent cookies)
-    window.chrome.webview.postMessage({ type: "fetchVideos", handle: "@lieblingstypen" });
   } else {
     setStat("mem", "n/a");
     setStat("cpu", "n/a");
   }
+
+  // ABOUT modal
+  const aboutOverlay = document.getElementById("aboutOverlay");
+  document.getElementById("aboutTitle").addEventListener("click", () => {
+    aboutOverlay.classList.remove("hidden");
+  });
+  document.getElementById("aboutCloseBtn").addEventListener("click", () => {
+    aboutOverlay.classList.add("hidden");
+  });
+  aboutOverlay.addEventListener("click", (e) => {
+    if (e.target === aboutOverlay) aboutOverlay.classList.add("hidden");
+  });
 
   function openHotkeysOverlay() {
     if (!currentConnId) return;
@@ -2499,6 +2485,22 @@
     refreshHotkeyBadges();
   }
 </script>
+
+<div class="overlay hidden" id="aboutOverlay">
+  <div class="connect-card about-card">
+    <h2>ÜBER LIEBLINGSTYPEN</h2>
+    <p>Hi, wir sind <strong>Chris</strong> &amp; <strong>Ali G</strong> — zwei Lieblingstypen, die zusammen zocken, lachen und alles dazwischen. Wir lieben Koop-Survival, Indie-Games und alles wo man kreativ Quatsch machen kann.</p>
+    <p>Dieses Tool ist ein <strong>kleines Spaßprojekt</strong> — gebaut weil wir's für unsere eigenen Streams brauchten, und gleich für andere mit verschenkt. Open Source, alles auf GitHub.</p>
+    <p>Schau gerne mal auf unserem Kanal vorbei wenn du Bock hast 👇</p>
+    <a class="yt-link" href="https://www.youtube.com/@lieblingstypen" target="_blank" rel="noopener noreferrer">
+      <span class="yt-icon">▶</span>
+      LIEBLINGSTYPEN AUF YOUTUBE
+    </a>
+    <div class="edit-actions" style="margin-top:2vh">
+      <button class="btn-secondary" id="aboutCloseBtn" type="button">SCHLIESSEN</button>
+    </div>
+  </div>
+</div>
 
 <div class="overlay hidden" id="hotkeysOverlay">
   <div class="connect-card">

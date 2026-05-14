@@ -4,7 +4,7 @@
     <OutputType>WinExe</OutputType>
     <TargetFramework>net8.0-windows</TargetFramework>
     <UseWPF>true</UseWPF>
-    <AssemblyName>LieblingstypenRemote</AssemblyName>
+    <AssemblyName>LieblingstypenRemoteOBS</AssemblyName>
     <RootNamespace>LieblingstypenRemote</RootNamespace>
     <Nullable>enable</Nullable>
     <LangVersion>latest</LangVersion>

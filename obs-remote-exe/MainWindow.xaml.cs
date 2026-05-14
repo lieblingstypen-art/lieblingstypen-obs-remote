@@ -15,7 +15,6 @@ namespace LieblingstypenRemote;
 public partial class MainWindow : Window
 {
     private GlobalHotkeyManager? _hotkeyMgr;
-    private readonly YouTubeService _youtube = new();
     private static readonly JsonSerializerOptions _jsonOpts = new() { PropertyNamingPolicy = JsonNamingPolicy.CamelCase };
 
     private DispatcherTimer? _statsTimer;
@@ -225,32 +224,10 @@ public partial class MainWindow : Window
             {
                 _hotkeyMgr?.SetHotkeys(Array.Empty<HotkeyDef>());
             }
-            else if (type == "fetchVideos")
-            {
-                var handle = root.TryGetProperty("handle", out var h) ? h.GetString() ?? "" : "";
-                _ = FetchAndSendVideosAsync(handle);
-            }
         }
         catch (Exception ex)
         {
             System.Diagnostics.Debug.WriteLine($"WebMessage error: {ex}");
-        }
-    }
-
-    private async Task FetchAndSendVideosAsync(string handle)
-    {
-        try
-        {
-            var videos = await _youtube.FetchLatestAsync(handle);
-            var json = JsonSerializer.Serialize(new { type = "videos", videos }, _jsonOpts);
-            await Dispatcher.InvokeAsync(() =>
-            {
-                webView.CoreWebView2.PostWebMessageAsString(json);
-            });
-        }
-        catch (Exception ex)
-        {
-            Debug.WriteLine($"FetchVideos failed: {ex}");
         }
     }
 
